@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SearchIcon } from 'lucide-react';
-import React from 'react';
 import { PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Pill, StatusDot } from '../components/ui/Pill';
@@ -24,6 +23,9 @@ const statusTone = {
   Seated: 'green',
   'No-show': 'red'
 };
+
+const UNIT_H = 96;
+const CELL_INSET = 4;
 
 const tierTone = {
   VIP: 'red',
@@ -49,6 +51,40 @@ function profileFor(name) {
   };
 }
 
+function BookingCard({ res, top, animate, onOpen }) {
+  const finalHeight = res.duration * UNIT_H - CELL_INSET * 2;
+  const [height, setHeight] = useState(
+    animate ? UNIT_H - CELL_INSET * 2 : finalHeight
+  );
+
+  useEffect(() => {
+    if (!animate) return;
+    const id = requestAnimationFrame(() => setHeight(finalHeight));
+    return () => cancelAnimationFrame(id);
+  }, [animate, finalHeight]);
+
+  return (
+    <article
+      onClick={onOpen}
+      className="absolute left-0 w-full cursor-pointer overflow-hidden rounded-xl border border-line bg-canvas p-3 transition-[height,border-color] duration-300 ease-soft hover:border-ink/30"
+      style={{ top, height }}>
+      
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-sm font-bold leading-tight text-ink">
+            {res.guest}
+          </h3>
+          <StatusDot tone={statusTone[res.status]} className="mt-1.5" />
+        </div>
+        <p className="mt-1 text-xs text-meta">
+          {res.covers} covers · {res.duration}h
+        </p>
+        <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-meta">
+          {res.status}
+        </p>
+      </article>
+  );
+}
+
 export function Bookings() {
   const toast = useToast();
 
@@ -66,6 +102,7 @@ export function Bookings() {
   const [specialRequests, setSpecialRequests] = useState('');
   const [depositRequired, setDepositRequired] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [recentKey, setRecentKey] = useState(null);
 
   function openNewBooking() {
     setGuestQuery('');
@@ -97,6 +134,7 @@ export function Bookings() {
       status: 'Confirmed'
     };
     setReservationList((p) => [...p, newRes]);
+    setRecentKey(`${newRes.table}|${newRes.guest}|${newRes.start}`);
     toast('Booking confirmed · ' + name, { tone: 'green' });
     setBookingOpen(false);
   }
@@ -122,71 +160,66 @@ export function Bookings() {
 
       <div className="scroll-thin overflow-x-auto rounded-card border border-line bg-surface p-4">
         <div className="min-w-[760px]">
-          <div
-            className="grid gap-2"
-            style={{ gridTemplateColumns: `72px repeat(${bookingTables.length}, minmax(0,1fr))` }}>
-            
-            <div />
-            {bookingTables.map((t) =>
-            <div
-              key={t}
-              className="pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
-              
-                {t}
+          <div className="flex">
+            <div className="w-[72px] shrink-0">
+              <div className="pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                &nbsp;
               </div>
-            )}
+              <div className="relative" style={{ height: bookingSlots.length * UNIT_H }}>
+                {bookingSlots.map((slot, i) =>
+                  <div key={slot} className="absolute inset-x-0 border-t border-line" style={{ top: i * UNIT_H }} />
+                )}
+                <div className="absolute inset-x-0 bottom-0 border-t border-line" />
+                {bookingSlots.map((slot, i) =>
+                  <div
+                    key={slot}
+                    className="absolute inset-x-0 flex items-start justify-end pr-2 pt-1.5 font-mono text-xs text-meta"
+                    style={{ top: i * UNIT_H, height: UNIT_H }}>
+                    {slot}
+                  </div>
+                )}
+              </div>
+            </div>
 
-            {bookingSlots.map((slot, rowIdx) =>
-            <React.Fragment key={slot}>
-                <div className="border-t border-line pt-2 font-mono text-xs text-meta">
-                  {slot}
-                </div>
-                {bookingTables.map((table) => {
-                const res = reservationList.find(
-                  (r) => r.table === table && r.start === rowIdx
-                );
-                const covered = reservationList.some(
-                  (r) =>
-                  r.table === table &&
-                  r.start < rowIdx &&
-                  r.start + r.duration > rowIdx
-                );
-                if (covered) return <div key={table} />;
-                return (
-                  <div key={table} className="border-t border-line pt-2">
-                      {res ?
-                    <article
-                      onClick={() => setProfile(profileFor(res.guest))}
-                      className="cursor-pointer rounded-xl border border-line bg-canvas p-3 transition-colors duration-150 ease-soft hover:border-ink/30"
-                      style={{ minHeight: res.duration * 64 }}>
-                      
-                          <div className="flex items-start justify-between gap-2">
-                            <h3 className="text-sm font-bold leading-tight text-ink">
-                              {res.guest}
-                            </h3>
-                            <StatusDot tone={statusTone[res.status]} className="mt-1.5" />
-                          </div>
-                          <p className="mt-1 text-xs text-meta">
-                            {res.covers} covers · {res.duration}h
-                          </p>
-                          <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-meta">
-                            {res.status}
-                          </p>
-                        </article> :
-
-                    <button
-                      type="button"
-                      onClick={openNewBooking}
-                      className="min-h-[64px] w-full rounded-xl border border-dashed border-line text-xs text-meta transition-colors duration-150 ease-soft hover:border-ink/30 hover:text-ink">
-                      
+            {bookingTables.map((table) => {
+              const tableRes = reservationList.filter((r) => r.table === table);
+              return (
+                <div key={table} className="min-w-0 flex-1 px-2">
+                  <div className="pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                    {table}
+                  </div>
+                  <div className="relative" style={{ height: bookingSlots.length * UNIT_H }}>
+                    {bookingSlots.map((slot, i) =>
+                      <div key={slot} className="absolute inset-x-0 border-t border-line" style={{ top: i * UNIT_H }} />
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 border-t border-line" />
+                    {bookingSlots.map((slot, i) => {
+                      const busy = tableRes.some((r) => r.start <= i && i < r.start + r.duration);
+                      if (busy) return null;
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          onClick={openNewBooking}
+                          className="absolute left-0 flex w-full items-center justify-center rounded-xl border border-dashed border-line text-xs text-meta transition-colors duration-150 ease-soft hover:border-ink/30 hover:text-ink"
+                          style={{ top: i * UNIT_H + CELL_INSET, height: UNIT_H - CELL_INSET * 2 }}>
                           + Book
                         </button>
-                    }
-                    </div>);
-
-              })}
-              </React.Fragment>
-            )}
+                      );
+                    })}
+                    {tableRes.map((r) => (
+                      <BookingCard
+                        key={`${r.table}|${r.guest}|${r.start}`}
+                        res={r}
+                        top={r.start * UNIT_H}
+                        animate={recentKey === `${r.table}|${r.guest}|${r.start}`}
+                        onOpen={() => setProfile(profileFor(r.guest))}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
