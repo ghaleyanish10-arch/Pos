@@ -16,17 +16,17 @@ var seedMenuData = []struct {
 	Photo     string
 	Available bool
 }{
-	{Name: "Chicken Momo", Category: "Momo & Snacks", Price: 390, Photo: "/4caa9d6c-3170-483a-b58c-9d3af445393f.jpg", Available: true},
-	{Name: "Momo Jhol", Category: "Momo & Snacks", Price: 420, Photo: "/4caa9d6c-3170-483a-b58c-9d3af445393f.jpg", Available: true},
-	{Name: "Veg Momo", Category: "Momo & Snacks", Price: 320, Photo: "/4caa9d6c-3170-483a-b58c-9d3af445393f.jpg", Available: false},
-	{Name: "Thakali Set", Category: "Mains", Price: 995, Photo: "/05d31d73-f590-4f11-b69b-acf220eb9721.jpg", Available: true},
-	{Name: "Dal Bhat", Category: "Mains", Price: 720, Photo: "/05d31d73-f590-4f11-b69b-acf220eb9721.jpg", Available: true},
-	{Name: "Buff Sekuwa", Category: "Grill", Price: 680, Photo: "/47998fc4-c2c1-4afd-ac79-8f2ac4bb1b53.jpg", Available: true},
-	{Name: "Chicken Chilli", Category: "Grill", Price: 520, Photo: "/47998fc4-c2c1-4afd-ac79-8f2ac4bb1b53.jpg", Available: true},
-	{Name: "Mint Mojito", Category: "Bar", Price: 450, Photo: "/ddfcee9d-8785-4548-a263-37d152418943.jpg", Available: true},
-	{Name: "Old Fashioned", Category: "Bar", Price: 750, Photo: "/ddfcee9d-8785-4548-a263-37d152418943.jpg", Available: false},
-	{Name: "Cheesecake", Category: "Dessert", Price: 480, Photo: "/f687e08d-0c8d-4a98-be44-503c99a75d88.jpg", Available: true},
-	{Name: "Tiramisu", Category: "Dessert", Price: 520, Photo: "/f687e08d-0c8d-4a98-be44-503c99a75d88.jpg", Available: true},
+	{Name: "Chicken Momo", Category: "Momo & Snacks", Price: 390, Photo: "/dishes/chicken-momo.jpg", Available: true},
+	{Name: "Momo Jhol", Category: "Momo & Snacks", Price: 420, Photo: "/dishes/momo-jhol.jpg", Available: true},
+	{Name: "Veg Momo", Category: "Momo & Snacks", Price: 320, Photo: "/dishes/veg-momo.jpg", Available: false},
+	{Name: "Thakali Set", Category: "Mains", Price: 995, Photo: "/dishes/thakali-set.jpg", Available: true},
+	{Name: "Dal Bhat", Category: "Mains", Price: 720, Photo: "/dishes/dal-bhat.jpg", Available: true},
+	{Name: "Buff Sekuwa", Category: "Grill", Price: 680, Photo: "/dishes/buff-sekuwa.jpg", Available: true},
+	{Name: "Chicken Chilli", Category: "Grill", Price: 520, Photo: "/dishes/chicken-chilli.jpg", Available: true},
+	{Name: "Mint Mojito", Category: "Bar", Price: 450, Photo: "/dishes/mint-mojito.jpg", Available: true},
+	{Name: "Old Fashioned", Category: "Bar", Price: 750, Photo: "/dishes/old-fashioned.jpg", Available: false},
+	{Name: "Cheesecake", Category: "Dessert", Price: 480, Photo: "/dishes/cheesecake.jpg", Available: true},
+	{Name: "Tiramisu", Category: "Dessert", Price: 520, Photo: "/dishes/tiramisu.jpg", Available: true},
 }
 
 // Seed bootstraps idempotent demo data: a default branch, a Corporate Admin

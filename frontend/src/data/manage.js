@@ -27,24 +27,18 @@ export const menuCategories = [
 'Dessert'];
 
 
-const momo = "/4caa9d6c-3170-483a-b58c-9d3af445393f.jpg";
-const thali = "/05d31d73-f590-4f11-b69b-acf220eb9721.jpg";
-const sekuwa = "/47998fc4-c2c1-4afd-ac79-8f2ac4bb1b53.jpg";
-const mojito = "/ddfcee9d-8785-4548-a263-37d152418943.jpg";
-const cheesecake = "/f687e08d-0c8d-4a98-be44-503c99a75d88.jpg";
-
 export const menuItems = [
-{ name: 'Chicken Momo', price: 'Rs 390', category: 'Momo & Snacks', photo: momo, available: true, variants: 'Steam · Fry · Jhol' },
-{ name: 'Momo Jhol', price: 'Rs 420', category: 'Momo & Snacks', photo: momo, available: true, variants: 'Spice · Mild / Hot' },
-{ name: 'Veg Momo', price: 'Rs 320', category: 'Momo & Snacks', photo: momo, available: false, variants: 'Steam · Fry · Jhol' },
-{ name: 'Thakali Set', price: 'Rs 995', category: 'Mains', photo: thali, available: true, variants: 'Less rice option' },
-{ name: 'Dal Bhat', price: 'Rs 720', category: 'Mains', photo: thali, available: true },
-{ name: 'Buff Sekuwa', price: 'Rs 680', category: 'Grill', photo: sekuwa, available: true, variants: 'Mild · Medium · Hot' },
-{ name: 'Chicken Chilli', price: 'Rs 520', category: 'Grill', photo: sekuwa, available: true, variants: 'Bone-in · Boneless' },
-{ name: 'Mint Mojito', price: 'Rs 450', category: 'Bar', photo: mojito, available: true, variants: 'Sugar · Regular / Light' },
-{ name: 'Old Fashioned', price: 'Rs 750', category: 'Bar', photo: mojito, available: false },
-{ name: 'Cheesecake', price: 'Rs 480', category: 'Dessert', photo: cheesecake, available: true, variants: 'Slice · 1 / 2' },
-{ name: 'Tiramisu', price: 'Rs 520', category: 'Dessert', photo: cheesecake, available: true }];
+{ name: 'Chicken Momo', price: 'Rs 390', category: 'Momo & Snacks', photo: "/dishes/chicken-momo.jpg", available: true, variants: 'Steam · Fry · Jhol' },
+{ name: 'Momo Jhol', price: 'Rs 420', category: 'Momo & Snacks', photo: "/dishes/momo-jhol.jpg", available: true, variants: 'Spice · Mild / Hot' },
+{ name: 'Veg Momo', price: 'Rs 320', category: 'Momo & Snacks', photo: "/dishes/veg-momo.jpg", available: false, variants: 'Steam · Fry · Jhol' },
+{ name: 'Thakali Set', price: 'Rs 995', category: 'Mains', photo: "/dishes/thakali-set.jpg", available: true, variants: 'Less rice option' },
+{ name: 'Dal Bhat', price: 'Rs 720', category: 'Mains', photo: "/dishes/dal-bhat.jpg", available: true },
+{ name: 'Buff Sekuwa', price: 'Rs 680', category: 'Grill', photo: "/dishes/buff-sekuwa.jpg", available: true, variants: 'Mild · Medium · Hot' },
+{ name: 'Chicken Chilli', price: 'Rs 520', category: 'Grill', photo: "/dishes/chicken-chilli.jpg", available: true, variants: 'Bone-in · Boneless' },
+{ name: 'Mint Mojito', price: 'Rs 450', category: 'Bar', photo: "/dishes/mint-mojito.jpg", available: true, variants: 'Sugar · Regular / Light' },
+{ name: 'Old Fashioned', price: 'Rs 750', category: 'Bar', photo: "/dishes/old-fashioned.jpg", available: false },
+{ name: 'Cheesecake', price: 'Rs 480', category: 'Dessert', photo: "/dishes/cheesecake.jpg", available: true, variants: 'Slice · 1 / 2' },
+{ name: 'Tiramisu', price: 'Rs 520', category: 'Dessert', photo: "/dishes/tiramisu.jpg", available: true }];
 
 
 export const guests = [

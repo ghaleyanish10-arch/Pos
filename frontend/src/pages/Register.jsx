@@ -120,7 +120,7 @@ export function Register() {
   const total = subtotal + vat;
   const qtyOf = (name) => (cart.find((l) => l.name === name)?.qty ?? 0);
 
-  const add = (item) => {
+  const add = (item, message) => {
     setCart((c) => {
       const existing = c.find((l) => l.name === item.name);
       if (existing) {
@@ -131,6 +131,7 @@ export function Register() {
         { id: item.id || '', name: item.name, price: toNumber(item.price), category: item.category, qty: 1 }
       ];
     });
+    if (message) toast(message, { tone: 'green' });
   };
 
   const inc = (name) =>
@@ -269,8 +270,8 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
                   tabIndex={item.available ? 0 : -1}
                   aria-pressed={inCart}
                   aria-disabled={!item.available}
-                  onClick={() => { if (item.available) add(item); }}
-                  onKeyDown={(e) => { if (item.available && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); add(item); } }}
+                  onClick={() => { if (item.available) add(item, `${item.name} added · qty ${qtyOf(item.name) + 1}`); }}
+                  onKeyDown={(e) => { if (item.available && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); add(item, `${item.name} added · qty ${qtyOf(item.name) + 1}`); } }}
                   className={`group relative flex flex-col overflow-hidden rounded-card border border-line bg-surface text-left transition-all duration-150 ease-soft hover:-translate-y-0.5 hover:border-ink/30 hover:bg-canvas hover:shadow-pop ${item.available ? 'cursor-pointer' : 'opacity-50'}`}>
                   <div className="relative">
                     {item.photo ? (
