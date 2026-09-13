@@ -82,6 +82,13 @@ export function Register() {
   const campaign = campaignList.find((c) => c.status === 'Scheduled');
   const phase = campaignPhase(campaign);
 
+  const scrollToCurrentOrder = () => {
+    if (window.matchMedia('(min-width: 1024px)').matches) return;
+    const el = document.getElementById('current-order');
+    if (!el) return;
+    requestAnimationFrame(() => el.scrollIntoView({ block: 'start' }));
+  };
+
   const handleCampaignCta = () => {
     if (!campaign) return;
     if (phase === 'preview') {
@@ -93,6 +100,7 @@ export function Register() {
       } else {
         toast('Pre-order reserved · 15% off at pickup', { tone: 'green' });
       }
+      scrollToCurrentOrder();
     } else if (promotedDish) {
       add(promotedDish);
       toast(`${promotedDish.name} added to the order`, { tone: 'green' });
@@ -206,7 +214,13 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
       }
 
       {campaign && phase !== 'hidden' &&
-      <section className="mb-5 overflow-hidden rounded-card border border-line bg-surface">
+      <section
+          onClick={() => setPreviewCampaign(campaign)}
+          role="button"
+          tabIndex={0}
+          aria-label={`Campaign info: ${campaign.name}`}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPreviewCampaign(campaign); } }}
+          className="mb-5 cursor-pointer overflow-hidden rounded-card border border-line bg-surface transition-shadow duration-150 ease-soft hover:shadow-pop focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/40">
           <div className="flex flex-wrap items-center gap-4 bg-ink px-5 py-4">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-status-amber">
               <MegaphoneIcon className="h-5 w-5" />
@@ -225,14 +239,20 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
                 {phaseNote && <> · auto: {phaseNote}</>}
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCampaignCta}>
-              {phase === 'preview' ? 'Preview' :
-               phase === 'preorder' ? (promotedDish ? `Pre-order ${promotedDish.name.split(' ')[0]} · 15% off` : 'Pre-order · 15% off') :
-               promotedDish ? `Order ${promotedDish.name.split(' ')[0]}` : 'Order'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <span className="hidden items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white/70 sm:flex">
+                <InfoIcon className="h-3.5 w-3.5" />
+                Details
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); handleCampaignCta(); }}>
+                {phase === 'preview' ? 'Preview' :
+                 phase === 'preorder' ? (promotedDish ? `Pre-order ${promotedDish.name.split(' ')[0]} · 15% off` : 'Pre-order · 15% off') :
+                 promotedDish ? `Order ${promotedDish.name.split(' ')[0]}` : 'Order'}
+              </Button>
+            </div>
           </div>
         </section>
       }
@@ -328,7 +348,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
           </div>
         </div>
 
-        <div className="flex max-h-[calc(100vh-8rem)] flex-col self-start rounded-card border border-line bg-surface p-5 lg:sticky lg:top-24">
+        <div id="current-order" className="flex max-h-[calc(100vh-8rem)] scroll-mt-24 flex-col self-start rounded-card border border-line bg-surface p-5 lg:sticky lg:top-24">
           <div className="flex items-center justify-between gap-3 border-b border-line pb-3">
             <div>
               <h2 className="text-lg font-extrabold tracking-tight text-ink">Current order</h2>
@@ -568,29 +588,46 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
 
       {previewCampaign && (() => {
         const pc = previewCampaign;
+        const pcPhase = campaignPhase(pc);
+        const isPreview = pcPhase === 'preview';
+        const actLabel = isPreview
+          ? 'Preview on register'
+          : pcPhase === 'preorder'
+            ? (promotedDish ? `Pre-order ${promotedDish.name.split(' ')[0]} · 15% off` : 'Pre-order · 15% off')
+            : 'Add to order';
         const dishPrice = pc.dish ? items.find((i) => i.name === pc.dish)?.price : null;
         return (
           <Dialog
             open
             onClose={() => setPreviewCampaign(null)}
-            title="Campaign preview"
-            subtitle="Not live yet — the register CTA switches to Pre-order on launch"
+            title={isPreview ? 'Campaign preview' : 'Campaign info'}
+            subtitle={isPreview ? 'Not live yet — the register CTA switches to Pre-order on launch' : 'This is what guests see in the register'}
             width="max-w-md"
             footer={
-              <Button variant="dark" full onClick={() => setPreviewCampaign(null)}>
-                Got it
-              </Button>
+              <div className="flex w-full gap-2">
+                <Button variant="outline" onClick={() => setPreviewCampaign(null)}>
+                  Close
+                </Button>
+                {!isPreview &&
+                <Button
+                  variant="dark"
+                  full
+                  onClick={() => { handleCampaignCta(); setPreviewCampaign(null); }}>
+                  {actLabel}
+                </Button>
+                }
+              </div>
             }>
             <div className="space-y-4">
               <div className="rounded-2xl border border-ink/20 bg-ink p-5 text-white">
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">
-                  Coming soon
+                  {phaseName} · {pc.channel}
                 </p>
                 <p className="mt-1 text-xl font-extrabold">
                   {pc.dish ? `${pc.dish}${dishPrice ? ` · Rs ${Number(dishPrice.replace(/\D/g, '')).toLocaleString('en-IN')}` : ''}` : pc.name}
                 </p>
                 <p className="mt-1 text-xs text-white/60">
-                  {phaseWindow(pc, 'preview') || 'No dates set'} · pre-orders open on launch
+                  {phaseWindow(pc, pcPhase) || 'No dates set'} · pre-orders {pcPhase === 'preview' ? 'open on launch' : pcPhase === 'preorder' ? 'open now' : 'available now'}
                 </p>
               </div>
               {pc.message && <p className="text-sm text-meta">{pc.message}</p>}
@@ -600,15 +637,25 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
                   <span className="font-semibold">15% off pre-orders</span>
                 </li>
                 <li className="flex justify-between">
-                  <span className="text-meta">Register CTA</span>
-                  <span className="font-semibold">Pre-order</span>
+                  <span className="text-meta">Phase</span>
+                  <span className="font-semibold">{phaseName}</span>
                 </li>
+                {phaseNote && (
+                  <li className="flex justify-between">
+                    <span className="text-meta">Next</span>
+                    <span className="font-semibold">{phaseNote}</span>
+                  </li>
+                )}
                 {pc.dish && (
                   <li className="flex justify-between">
                     <span className="text-meta">Featured dish</span>
                     <span className="font-semibold">{pc.dish}</span>
                   </li>
                 )}
+                <li className="flex justify-between">
+                  <span className="text-meta">Channel</span>
+                  <span className="font-semibold">{pc.channel}</span>
+                </li>
               </ul>
             </div>
           </Dialog>
