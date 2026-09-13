@@ -15,6 +15,7 @@ import { failedTransactions } from '../data/pos';
 export function Fiscal() {
   const toast = useToast();
   const [retryOpen, setRetryOpen] = useState(false);
+  const [infoTxn, setInfoTxn] = useState(null);
   const [selectedTxn, setSelectedTxn] = useState(null);
   const [retryCount, setRetryCount] = useState({});
   const [auditNote, setAuditNote] = useState('');
@@ -99,6 +100,7 @@ export function Fiscal() {
               <Th>Transaction</Th>
               <Th>Fiscal ID</Th>
               <Th>Order ref</Th>
+              <Th>Payment</Th>
               <Th className="text-right">Amount</Th>
               <Th>Certification</Th>
               <Th></Th>
@@ -109,11 +111,16 @@ export function Fiscal() {
               const isFailed = t.status === 'Failed';
               const retries = retryCount[t.id] || 0;
               return (
-                <Tr key={t.id}>
+                <Tr key={t.id} onClick={() => setInfoTxn(t)}>
                   <Td className="font-mono text-sm text-meta">{t.time}</Td>
                   <Td className="font-mono text-sm font-semibold">{t.id}</Td>
                   <Td className="font-mono text-sm">{t.fiscalId}</Td>
                   <Td className="text-sm">{t.ref}</Td>
+                  <Td className="text-sm">
+                    <span className="inline-flex rounded-md bg-canvas px-2 py-1 text-xs font-semibold text-ink">
+                      {t.method}
+                    </span>
+                  </Td>
                   <Td className="text-right font-mono text-sm font-bold">{t.amount}</Td>
                   <Td>
                     {t.certified === 'Certified' ?
@@ -131,7 +138,8 @@ export function Fiscal() {
                   </Td>
                   <Td>
                     {isFailed &&
-                    <Button size="sm" variant="red" onClick={() => {
+                    <Button size="sm" variant="red" onClick={(e) => {
+                      e.stopPropagation();
                       const failed = failedTransactions.find((f) => f.id === t.id);
                       if (failed) openRetry(failed);
                     }}>
@@ -244,6 +252,71 @@ export function Fiscal() {
                     className={inputClass}
                   />
                 </Field>
+              }
+            </div>
+          </div>
+        }
+      </Drawer>
+
+      <Drawer
+        open={!!infoTxn}
+        onClose={() => setInfoTxn(null)}
+        title="Transaction details"
+        subtitle={infoTxn ? infoTxn.id : ''}
+        footer={
+          <div className="flex w-full gap-2">
+            <Button variant="outline" onClick={() => setInfoTxn(null)}>Close</Button>
+          </div>
+        }
+      >
+        {infoTxn &&
+        <div className="space-y-5">
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-line bg-canvas p-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                  Payment method
+                </p>
+                <p className="mt-1 text-lg font-bold text-ink">{infoTxn.method}</p>
+              </div>
+              <span className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-meta">
+                {infoTxn.status}
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-line bg-canvas p-4">
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-meta">Order ref</dt>
+                  <dd className="font-semibold text-ink">{infoTxn.ref}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-meta">Time</dt>
+                  <dd className="font-mono font-semibold text-ink">{infoTxn.time}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-meta">Fiscal ID</dt>
+                  <dd className="font-mono font-semibold text-ink">{infoTxn.fiscalId}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-meta">Amount</dt>
+                  <dd className="font-mono font-bold text-ink">{infoTxn.amount}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-line bg-canvas p-4">
+              <p className="text-sm font-semibold text-ink">Certification</p>
+              {infoTxn.certified === 'Certified' ?
+              <Pill tone="green" dot>
+                    Certified
+                  </Pill> :
+              infoTxn.status === 'Failed' ?
+              <Pill tone="red" dot>
+                    Failed
+                  </Pill> :
+              <Pill tone="amber" dot>
+                    Pending certification
+                  </Pill>
               }
             </div>
           </div>
