@@ -3,7 +3,7 @@ import { FlameIcon, LinkIcon, PauseIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Board, BoardCard, Column, InfoLine } from '../components/ui/Kanban';
 import { AlertBanner } from '../components/ui/AlertBanner';
-import { AIBadge } from '../components/ui/Pill';
+import { AIBadge, TypeBadge } from '../components/ui/Pill';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useOrders } from '../state/OrderContext';
@@ -206,15 +206,16 @@ export function KDS() {
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
             badge={
-            <span className="flex items-center gap-1.5">
-                  {t.ai && <AIBadge label="AI phone order" />}
-                  {t.linked &&
+            <span className="flex flex-wrap items-center gap-1.5">
+                <TypeBadge type={t.type} />
+                {t.ai && <AIBadge label="AI phone order" />}
+                {t.linked &&
               <span className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-1 text-[11px] font-semibold text-meta">
                       <LinkIcon className="h-3 w-3" />
                       Split ticket
                     </span>
               }
-                </span>
+              </span>
             }
             banner={t.allergy ? <AlertBanner>{t.allergy}</AlertBanner> : undefined}
             footer={
@@ -243,12 +244,15 @@ export function KDS() {
             rightTone={t.fired ? 'red' : undefined}
             accent={t.fired ? 'red' : undefined}
             badge={
-            t.fired ?
+            <span className="flex flex-wrap items-center gap-1.5">
+                <TypeBadge type={t.type} />
+                {t.fired &&
             <span className="inline-flex items-center gap-1 rounded-full bg-tint-red px-2 py-1 text-[11px] font-bold uppercase text-status-red">
                     <FlameIcon className="h-3 w-3" />
                     Fired
-                  </span> :
-            undefined
+                  </span>
+            }
+              </span>
             }
             footer={
             <>
@@ -283,7 +287,12 @@ export function KDS() {
             tag={t.tag}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
-            badge={t.ai ? <AIBadge label="AI phone order" /> : undefined}
+            badge={
+            <span className="flex flex-wrap items-center gap-1.5">
+                <TypeBadge type={t.type} />
+                {t.ai && <AIBadge label="AI phone order" />}
+              </span>
+            }
             footer={
             <>
                   <Button size="sm" variant="outline" onClick={() => recallTicket(t)}>

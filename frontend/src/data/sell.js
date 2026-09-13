@@ -1,6 +1,7 @@
 export const incomingTickets = [
 {
   id: '#1042',
+  type: 'dine-in',
   tag: 'Table 12',
   items: ['2× Momo Jhol', '1× Chicken Chilli', '1× Ice Tea'],
   elapsed: '1 min',
@@ -14,6 +15,7 @@ export const incomingTickets = [
 },
 {
   id: '#1043',
+  type: 'delivery',
   tag: 'Phone',
   items: ['1× Thakali Set', '2× Lassi'],
   elapsed: '2 min',
@@ -27,6 +29,7 @@ export const incomingTickets = [
 },
 {
   id: '#1044',
+  type: 'dine-in',
   tag: 'Table 4',
   items: ['3× Espresso', '1× Cheesecake'],
   elapsed: '3 min',
@@ -43,6 +46,7 @@ export const incomingTickets = [
 export const preparingTickets = [
 {
   id: '#1038',
+  type: 'dine-in',
   tag: 'Table 7',
   items: ['1× Buff Sekuwa', '2× Chowmein'],
   elapsed: '9 min',
@@ -56,6 +60,7 @@ export const preparingTickets = [
 },
 {
   id: '#1039',
+  type: 'takeaway',
   tag: 'Takeaway',
   items: ['4× Chicken Momo'],
   elapsed: '12 min',
@@ -68,6 +73,7 @@ export const preparingTickets = [
 },
 {
   id: '#1040',
+  type: 'dine-in',
   tag: 'Table 2',
   items: ['2× Mojito', '1× Old Fashioned'],
   elapsed: '5 min',
@@ -83,6 +89,7 @@ export const preparingTickets = [
 export const readyTickets = [
 {
   id: '#1035',
+  type: 'dine-in',
   tag: 'Table 9',
   items: ['2× Dal Bhat', '1× Papad'],
   elapsed: '18 min',
@@ -95,6 +102,7 @@ export const readyTickets = [
 },
 {
   id: '#1036',
+  type: 'delivery',
   tag: 'Phone',
   items: ['1× Tiramisu'],
   elapsed: '21 min',

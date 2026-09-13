@@ -53,6 +53,32 @@ export function AIBadge({ label = 'AI' }) {
 
 }
 
+const typeLabel = {
+  dine: 'Dine-in',
+  takeaway: 'Takeaway',
+  delivery: 'Delivery'
+};
+
+const typeTone = {
+  dine: 'text-status-blue bg-tint-blue',
+  takeaway: 'text-status-amber bg-tint-amber',
+  delivery: 'text-status-green bg-tint-green'
+};
+
+export function TypeBadge({ type = 'dine-in' }) {
+  const key = String(type || '').toLowerCase().startsWith('take')
+    ? 'takeaway'
+    : String(type || '').toLowerCase().startsWith('deliv')
+      ? 'delivery'
+      : 'dine';
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] ${typeTone[key]}`}>
+      {typeLabel[key]}
+    </span>);
+
+}
+
 export function CountBadge({
   children,
   tone = 'neutral'

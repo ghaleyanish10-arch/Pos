@@ -48,6 +48,14 @@ function readOrderNotes() {
   }
 }
 
+function readOrderType() {
+  try {
+    return localStorage.getItem('mesa_register_type') || 'dine-in';
+  } catch {
+    return 'dine-in';
+  }
+}
+
 export function Register() {
   const [searchParams] = useSearchParams();
   const tableParam = searchParams.get('table');
@@ -59,6 +67,7 @@ export function Register() {
   const [payOpen, setPayOpen] = useState(false);
   const [payMethod, setPayMethod] = useState('Cash');
   const [orderNotes, setOrderNotes] = useState(readOrderNotes);
+  const [orderType, setOrderType] = useState(readOrderType);
   const [recipe, setRecipe] = useState(null);
   const [previewCampaign, setPreviewCampaign] = useState(null);
 
@@ -77,6 +86,14 @@ export function Register() {
       /* storage unavailable */
     }
   }, [orderNotes]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mesa_register_type', orderType);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [orderType]);
 
   const { campaignList } = useCampaigns();
   const campaign = campaignList.find((c) => c.status === 'Scheduled');
@@ -128,6 +145,8 @@ export function Register() {
   const total = subtotal + vat;
   const qtyOf = (name) => (cart.find((l) => l.name === name)?.qty ?? 0);
 
+  const orderTypeLabel = orderType.charAt(0).toUpperCase() + orderType.slice(1);
+
   const add = (item, message) => {
     setCart((c) => {
       const existing = c.find((l) => l.name === item.name);
@@ -157,7 +176,7 @@ export function Register() {
       const order = await api('/orders', {
         method: 'POST',
         body: {
-          type: 'dine-in',
+          type: orderType,
           table_id: tableParam || '',
           guest_id: '',
           items: cart.map((l, i) => ({
@@ -184,7 +203,7 @@ export function Register() {
       fallback = true;
     }
 
-const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNotes });
+const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNotes, type: orderType });
       setPayOpen(false);
       setPayMethod('Cash');
       setOrderNotes('');
@@ -363,6 +382,27 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
             </Button>
           </div>
 
+          <div className="flex items-center gap-1.5 border-b border-line pb-3">
+            {['Dine-in', 'Takeaway', 'Delivery'].map((t) => {
+            const active = t.toLowerCase() === orderType;
+            return (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setOrderType(t.toLowerCase())}
+                className={`flex h-8 flex-1 items-center justify-center rounded-full border px-3 text-[13px] font-semibold transition-colors duration-150 ease-soft ${
+                active ?
+                'border-ink bg-ink text-white' :
+                'border-line bg-canvas text-meta hover:text-ink'}`
+                }>
+                
+                {t}
+              </button>);
+
+            })}
+          </div>
+
           <div className="scroll-thin min-h-0 flex-1 space-y-2.5 overflow-y-auto py-4">
             {cart.length === 0 ? (
               <EmptyState
@@ -456,7 +496,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
         open={payOpen}
         onClose={() => setPayOpen(false)}
         title="Collect payment"
-        subtitle={`${cart.length} lines · ${fmt(total)} due`}
+        subtitle={`${orderTypeLabel} · ${cart.length} lines · ${fmt(total)} due`}
         width="max-w-md"
         footer={
           <>

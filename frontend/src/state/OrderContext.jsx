@@ -36,11 +36,12 @@ export function OrderProvider({ children }) {
     }
   }, [incoming]);
 
-  const addOrder = useCallback((cart, payMethod, { notes = '', allergy = '', server = 'Riya' } = {}) => {
+  const addOrder = useCallback((cart, payMethod, { notes = '', allergy = '', server = 'Riya', type = 'dine-in' } = {}) => {
     if (cart.length === 0) return null;
     const id = `#${nextId++}`;
     const ticket = {
       id,
+      type,
       tag: 'Register',
       items: cart.map((l) => `${l.qty}× ${l.name}`),
       elapsed: '0 min',

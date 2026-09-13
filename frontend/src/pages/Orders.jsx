@@ -2,7 +2,7 @@ import React from 'react';
 import { PageHeader } from '../components/ui/Card';
 import { Board, BoardCard, Column, InfoLine } from '../components/ui/Kanban';
 import { AlertBanner } from '../components/ui/AlertBanner';
-import { AIBadge } from '../components/ui/Pill';
+import { AIBadge, TypeBadge } from '../components/ui/Pill';
 import { Button } from '../components/ui/Button';
 import { FilterChips } from '../components/ui/Controls';
 import { Drawer } from '../components/ui/Drawer';
@@ -80,11 +80,25 @@ export function Orders() {
   };
 
   const all = tickets || [];
+  const matchesType = (t) =>
+    filter === 'All orders' ||
+    filter === 'Held' ||
+    String(t.type || 'dine-in').toLowerCase() === filter.toLowerCase();
+
   const combinedIncoming = [...liveIncoming, ...all.filter((t) => t.status === 'incoming')];
-  const preparing = all.filter((t) => t.status === 'preparing');
-  const ready = all.filter((t) => t.status === 'ready');
-  const heldTickets = combinedIncoming.filter((t) => heldIds.includes(t.id));
-  const visibleIncoming = filter === 'Held' ? heldTickets : combinedIncoming.filter((t) => !heldIds.includes(t.id));
+  const preparing = all.filter((t) => t.status === 'preparing').filter(matchesType);
+  const ready = all.filter((t) => t.status === 'ready').filter(matchesType);
+  const heldTickets = combinedIncoming.filter((t) => matchesType(t) && heldIds.includes(t.id));
+  const visibleIncoming = filter === 'Held'
+    ? heldTickets
+    : combinedIncoming.filter((t) => !heldIds.includes(t.id)).filter(matchesType);
+
+  const typeLabel = (t) => {
+    const ty = String(t?.type || 'dine-in').toLowerCase();
+    if (ty === 'takeaway') return 'Takeaway';
+    if (ty === 'delivery') return 'Delivery';
+    return 'Dine-in';
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1400px]">
@@ -98,7 +112,7 @@ export function Orders() {
       </PageHeader>
 
       <Board>
-        <Column title="Incoming" tone="blue" count={combinedIncoming.length}>
+        <Column title="Incoming" tone="blue" count={visibleIncoming.length}>
           {visibleIncoming.map((t) =>
           <BoardCard
             key={t.id}
@@ -106,7 +120,12 @@ export function Orders() {
             tag={t.tag}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
-            badge={t.ai ? <AIBadge label="AI phone order" /> : undefined}
+            badge={
+            <span className="flex flex-wrap items-center gap-1.5">
+                <TypeBadge type={t.type} />
+                {t.ai && <AIBadge label="AI phone order" />}
+              </span>
+            }
             banner={
             t.allergy ? <AlertBanner>{t.allergy}</AlertBanner> : undefined
             }
@@ -139,6 +158,7 @@ export function Orders() {
             right={t.elapsed}
             rightTone={t.fired ? 'red' : undefined}
             accent={t.fired ? 'red' : undefined}
+            badge={<TypeBadge type={t.type} />}
             footer={
             <>
                   <Button size="sm" variant="outline" onClick={() => {
@@ -170,7 +190,12 @@ export function Orders() {
             tag={t.tag}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
-            badge={t.ai ? <AIBadge label="AI phone order" /> : undefined}
+            badge={
+            <span className="flex flex-wrap items-center gap-1.5">
+                <TypeBadge type={t.type} />
+                {t.ai && <AIBadge label="AI phone order" />}
+              </span>
+            }
             footer={
             <>
                   <Button size="sm" variant="outline" onClick={() => {
@@ -205,6 +230,9 @@ export function Orders() {
             {toLines(detailTicket.items).map((line) => (
               <InfoLine key={line}>{line}</InfoLine>
             ))}
+            <div className="mt-2 border-t border-line pt-2">
+              <InfoLine label="Order type:">{typeLabel(detailTicket)}</InfoLine>
+            </div>
             {detailTicket.modifiers && detailTicket.modifiers.length > 0 && (
               <div className="mt-2 border-t border-line pt-2">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta mb-1">Modifiers</p>

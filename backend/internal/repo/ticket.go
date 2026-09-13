@@ -16,8 +16,10 @@ func NewTicketRepo(db *pgxpool.Pool) *TicketRepo {
 }
 
 func (r *TicketRepo) List(ctx context.Context, station, status string) ([]model.KDSTicket, error) {
-	query := `SELECT t.id, t.order_id, COALESCE(t.tag, ''), t.station, t.status, t.ai_phone, COALESCE(t.allergy, ''), t.fired, t.linked_ticket_id::text, t.created_at
-		FROM kds_tickets t WHERE 1=1`
+	query := `SELECT t.id, t.order_id, COALESCE(o.type, 'dine-in'), COALESCE(t.tag, ''), t.station, t.status, t.ai_phone, COALESCE(t.allergy, ''), t.fired, t.linked_ticket_id::text, t.created_at
+		FROM kds_tickets t
+		LEFT JOIN orders o ON o.id = t.order_id
+		WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
 
@@ -43,7 +45,7 @@ func (r *TicketRepo) List(ctx context.Context, station, status string) ([]model.
 	var tickets []model.KDSTicket
 	for rows.Next() {
 		var t model.KDSTicket
-		if err := rows.Scan(&t.ID, &t.OrderID, &t.Tag, &t.Station, &t.Status, &t.AIPhone, &t.Allergy, &t.Fired, &t.LinkedTicketID, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.OrderID, &t.Type, &t.Tag, &t.Station, &t.Status, &t.AIPhone, &t.Allergy, &t.Fired, &t.LinkedTicketID, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		items, _ := r.getOrderItems(ctx, t.OrderID)
@@ -75,8 +77,11 @@ func (r *TicketRepo) getOrderItems(ctx context.Context, orderID string) ([]model
 func (r *TicketRepo) GetByID(ctx context.Context, id string) (*model.KDSTicket, error) {
 	var t model.KDSTicket
 	err := r.db.QueryRow(ctx,
-		`SELECT id, order_id, COALESCE(tag,''), station, status, ai_phone, COALESCE(allergy,''), fired, linked_ticket_id::text, created_at FROM kds_tickets WHERE id = $1`, id,
-	).Scan(&t.ID, &t.OrderID, &t.Tag, &t.Station, &t.Status, &t.AIPhone, &t.Allergy, &t.Fired, &t.LinkedTicketID, &t.CreatedAt)
+		`SELECT t.id, t.order_id, COALESCE(o.type, 'dine-in'), COALESCE(t.tag,''), t.station, t.status, t.ai_phone, COALESCE(t.allergy,''), t.fired, t.linked_ticket_id::text, t.created_at
+		FROM kds_tickets t
+		LEFT JOIN orders o ON o.id = t.order_id
+		WHERE t.id = $1`, id,
+	).Scan(&t.ID, &t.OrderID, &t.Type, &t.Tag, &t.Station, &t.Status, &t.AIPhone, &t.Allergy, &t.Fired, &t.LinkedTicketID, &t.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

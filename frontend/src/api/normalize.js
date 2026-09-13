@@ -16,6 +16,7 @@ export function normalizeTicket(t) {
   return {
     ...t,
     id: t.id,
+    type: t.type || 'dine-in',
     ai: !!t.ai_phone,
     ai_phone: t.ai_phone,
     linked: !!t.linked_ticket_id,
