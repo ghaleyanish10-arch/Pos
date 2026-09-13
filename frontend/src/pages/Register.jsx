@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CheckIcon, InfoIcon, MegaphoneIcon, MinusIcon, PlusIcon, ShoppingCartIcon } from 'lucide-react';
+import { CheckIcon, InfoIcon, MegaphoneIcon, MinusIcon, PlusIcon, ShoppingCartIcon, XIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Pill } from '../components/ui/Pill';
@@ -56,6 +56,14 @@ function readOrderType() {
   }
 }
 
+function readOrderTable() {
+  try {
+    return localStorage.getItem('mesa_register_table') || '';
+  } catch {
+    return '';
+  }
+}
+
 export function Register() {
   const [searchParams] = useSearchParams();
   const tableParam = searchParams.get('table');
@@ -68,6 +76,7 @@ export function Register() {
   const [payMethod, setPayMethod] = useState('Cash');
   const [orderNotes, setOrderNotes] = useState(readOrderNotes);
   const [orderType, setOrderType] = useState(readOrderType);
+  const [orderTable, setOrderTable] = useState(() => readOrderTable() || tableParam || '');
   const [recipe, setRecipe] = useState(null);
   const [previewCampaign, setPreviewCampaign] = useState(null);
 
@@ -94,6 +103,14 @@ export function Register() {
       /* storage unavailable */
     }
   }, [orderType]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mesa_register_table', orderTable);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [orderTable]);
 
   const { campaignList } = useCampaigns();
   const campaign = campaignList.find((c) => c.status === 'Scheduled');
@@ -177,7 +194,7 @@ export function Register() {
         method: 'POST',
         body: {
           type: orderType,
-          table_id: tableParam || '',
+          table_id: orderTable || tableParam || '',
           guest_id: '',
           items: cart.map((l, i) => ({
             menu_item_id: l.id,
@@ -203,7 +220,7 @@ export function Register() {
       fallback = true;
     }
 
-const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNotes, type: orderType, table: tableParam });
+const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNotes, type: orderType, table: orderTable || tableParam || '—' });
       setPayOpen(false);
       setPayMethod('Cash');
       setOrderNotes('');
@@ -375,7 +392,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
                 {cart.length === 0
                   ? 'No items yet'
                   : `${cart.length} line${cart.length > 1 ? 's' : ''} · ${cart.reduce((s, l) => s + l.qty, 0)} items`}
-                {tableParam && ` · Table ${tableParam}`}
+                {orderTable && ` · Table ${orderTable}`}
               </p>
             </div>
             <Button variant="quiet" size="sm" onClick={clearCart} disabled={cart.length === 0}>
@@ -402,6 +419,30 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
               </button>);
 
             })}
+          </div>
+
+          <div className="mt-3 border-b border-line pb-3">
+            <label className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              Table number
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="text"
+                value={orderTable}
+                onChange={(e) => setOrderTable(e.target.value.replace(/[^0-9a-zA-Z\- ]/g, '').slice(0, 8))}
+                placeholder={tableParam ? `Table ${tableParam}` : 'e.g. T4'}
+                aria-label="Table number"
+                className="h-10 w-full rounded-xl border border-line bg-canvas px-3 text-sm text-ink placeholder:text-meta focus:border-ink focus:outline-none" />
+              {orderTable && (
+                <button
+                  type="button"
+                  aria-label="Clear table number"
+                  onClick={() => setOrderTable('')}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-surface text-meta transition-colors duration-150 ease-soft hover:text-ink">
+                  <XIcon className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="scroll-thin min-h-0 flex-1 space-y-2.5 overflow-y-auto py-4">
@@ -497,7 +538,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
         open={payOpen}
         onClose={() => setPayOpen(false)}
         title="Collect payment"
-        subtitle={`${orderTypeLabel}${tableParam ? ` · Table ${tableParam}` : ''} · ${cart.length} lines · ${fmt(total)} due`}
+        subtitle={`${orderTypeLabel}${orderTable ? ` · Table ${orderTable}` : ''} · ${cart.length} lines · ${fmt(total)} due`}
         width="max-w-md"
         footer={
           <>
