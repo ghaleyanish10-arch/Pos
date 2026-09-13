@@ -4,6 +4,7 @@ import { ToastProvider } from './components/ui/Toast';
 import { RoleProvider } from './state/RoleContext';
 import { SettingsProvider } from './state/SettingsContext';
 import { OrderProvider } from './state/OrderContext';
+import { TableProvider } from './state/TableContext';
 import { MenuProvider } from './state/MenuContext';
 import { CampaignProvider } from './state/CampaignContext';
 import { NotificationProvider } from './state/Notifications';
@@ -11,6 +12,9 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { Home } from './pages/Home';
 import { Register } from './pages/Register';
 import { RegisterCustomer } from './pages/RegisterCustomer';
+import { VerifyEmail } from './pages/VerifyEmail';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
 import { NotFound } from './pages/NotFound';
 import { Orders } from './pages/Orders';
 import { Refunds } from './pages/Refunds';
@@ -49,6 +53,7 @@ export function App() {
       <ToastProvider>
         <NotificationProvider>
         <OrderProvider>
+        <TableProvider>
         <MenuProvider>
         <CampaignProvider>
         <BrowserRouter>
@@ -57,6 +62,9 @@ export function App() {
             <Route path="/" element={<Home />} />
             <Route path="/register" element={<Register />} />
             <Route path="/register/customer" element={<RegisterCustomer />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/refunds" element={<Refunds />} />
             <Route path="/transactions" element={<Transactions />} />
@@ -91,6 +99,7 @@ export function App() {
       </BrowserRouter>
     </CampaignProvider>
     </MenuProvider>
+    </TableProvider>
     </OrderProvider>
     </NotificationProvider>
     </ToastProvider>

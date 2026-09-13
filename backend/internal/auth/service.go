@@ -68,3 +68,25 @@ func (s *Service) ValidateRefreshToken(ctx context.Context, refreshToken, secret
 
 	return nil
 }
+
+// MarkEmailVerified stamps email_verified_at once, the first time.
+func (s *Service) MarkEmailVerified(ctx context.Context, userID string) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE users SET email_verified_at = now() WHERE id = $1 AND email_verified_at IS NULL`,
+		userID,
+	)
+	return err
+}
+
+// UpdatePassword replaces the password hash (used by the reset flow).
+func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx,
+		`UPDATE users SET password_hash = $1 WHERE id = $2`,
+		string(hash), userID,
+	)
+	return err
+}

@@ -14,6 +14,19 @@ type Config struct {
 	JWTAccessExpiry time.Duration
 	JWTRefreshExpiry time.Duration
 	CORSOrigin      string
+
+	// SMTP — when unset, email endpoints return a clear 503 instead of pretending to send.
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+
+	// Resend — real email delivery from localhost (api.resend.com).
+	RESENDAPIKey string
+	EmailFrom    string
+	EmailFromName string
+	AppURL       string
 }
 
 func Load() *Config {
@@ -26,6 +39,17 @@ func Load() *Config {
 		JWTAccessExpiry: parseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m")),
 		JWTRefreshExpiry: parseDuration(getEnv("JWT_REFRESH_EXPIRY", "168h")),
 		CORSOrigin:      getEnv("CORS_ORIGIN", "http://localhost:5173"),
+
+		SMTPHost:     getEnv("SMTP_HOST", ""),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUsername: getEnv("SMTP_USERNAME", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", ""),
+
+		RESENDAPIKey: getEnv("RESEND_API_KEY", ""),
+		EmailFrom:    getEnv("EMAIL_FROM", ""),
+		EmailFromName: getEnv("EMAIL_FROM_NAME", "Mesa OS"),
+		AppURL:       getEnv("APP_URL", "http://localhost:5173"),
 	}
 }
 

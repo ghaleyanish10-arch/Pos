@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { AlertTriangleIcon } from 'lucide-react';
+import { AlertTriangleIcon, UserPlusIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Drawer } from '../components/ui/Drawer';
-import { GhostCard, Toggle } from '../components/ui/Controls';
+import { Field, GhostCard, Toggle, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
+import api from '../api/client';
 import { permissionRows, roles, activeSessions } from '../data/admin';
 
 export function Permissions() {
@@ -12,6 +13,10 @@ export function Permissions() {
   const initial = useMemo(() => permissionRows.map((r) => r.grants.map(Boolean)), []);
   const [grants, setGrants] = useState(initial.map((r) => [...r]));
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [account, setAccount] = useState({ name: '', email: '', role: 'Cashier' });
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountNote, setAccountNote] = useState('');
 
   const dirty = useMemo(
     () => grants.some((r, i) => r.some((g, j) => g !== initial[i][j])),
@@ -61,11 +66,46 @@ export function Permissions() {
     toast('Changes discarded');
   };
 
+  // Creates the account via POST /auth/register; the backend emails a real
+  // verification link to the address (Resend), pointing back at this app.
+  const createAccount = async (e) => {
+    e.preventDefault();
+    setAccountNote('');
+    setAccountBusy(true);
+    try {
+      const res = await api('/auth/register', {
+        method: 'POST',
+        body: {
+          name: account.name.trim(),
+          email: account.email.trim(),
+          password: 'Welcome#2026',
+          role: account.role,
+          branch_id: ''
+        }
+      });
+      if (res?.email_verification_sent) {
+        toast.success(`Account created · verification email sent to ${account.email.trim()}`);
+        setAccountNote(`Verification email sent to ${account.email.trim()} — the link opens back in this app.`);
+      } else {
+        toast(`Account created · email not configured, no verification sent`, { tone: 'amber' });
+        setAccountNote('Account created, but the server has no RESEND_API_KEY set — no email was sent.');
+      }
+      setAccount({ name: '', email: '', role: 'Cashier' });
+    } catch (err) {
+      toast(err?.message || 'Could not create the account', { tone: 'red' });
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
   return (
     <div className="mx-auto w-full max-w-[1400px]">
       <PageHeader title="Roles & Permissions" descriptor="4 roles · 11 controlled actions">
         <Button variant="outline" disabled={!dirty} onClick={handleDiscard}>
           Discard changes
+        </Button>
+        <Button variant="outline" icon={<UserPlusIcon className="h-4 w-4" />} onClick={() => setAccountOpen(true)}>
+          Add account
         </Button>
         <Button variant="dark" disabled={!dirty} onClick={handleSave}>
           Save permissions
@@ -184,6 +224,62 @@ export function Permissions() {
         <p className="mt-4 text-xs text-meta">
           Affected staff will see a permissions update on their next action.
         </p>
+      </Drawer>
+
+      <Drawer
+        open={accountOpen}
+        onClose={() => !accountBusy && setAccountOpen(false)}
+        title="Add account"
+        subtitle="Creates the login and emails the verification link"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setAccountOpen(false)} disabled={accountBusy}>
+              Cancel
+            </Button>
+            <Button variant="dark" type="submit" form="add-account-form" disabled={accountBusy}>
+              {accountBusy ? 'Creating…' : 'Create account & send email'}
+            </Button>
+          </>
+        }>
+        <form id="add-account-form" className="space-y-4" onSubmit={createAccount}>
+          <Field label="Full name">
+            <input
+              className={inputClass}
+              required
+              placeholder="e.g. Anjal Shrestha"
+              value={account.name}
+              onChange={(e) => setAccount({ ...account, name: e.target.value })} />
+          </Field>
+          <Field label="Email (a real inbox — Gmail/Outlook works)">
+            <input
+              className={inputClass}
+              type="email"
+              required
+              placeholder="colleague@gmail.com"
+              value={account.email}
+              onChange={(e) => setAccount({ ...account, email: e.target.value })} />
+          </Field>
+          <Field label="Role">
+            <select
+              className={inputClass}
+              value={account.role}
+              onChange={(e) => setAccount({ ...account, role: e.target.value })}>
+              <option>Cashier</option>
+              <option>Store Manager</option>
+              <option>Inventory Auditor</option>
+              <option>Corporate Admin</option>
+            </select>
+          </Field>
+          {accountNote &&
+          <p className="rounded-xl border border-status-green/30 bg-tint-green/40 px-3 py-2 text-xs font-semibold text-status-green">
+              {accountNote}
+            </p>
+          }
+          <p className="rounded-xl border border-line bg-canvas px-3 py-2 text-xs text-meta">
+            A temporary password (Welcome#2026) is set — the emailed verification link is what
+            proves the address. The user should change the password after signing in.
+          </p>
+        </form>
       </Drawer>
     </div>
   );

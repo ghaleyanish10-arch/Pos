@@ -8,12 +8,15 @@ import {
   DownloadIcon,
   EqualIcon,
   MegaphoneIcon,
-  ReceiptIcon } from
+  ReceiptIcon,
+  TrendingDownIcon,
+  TrophyIcon } from
 'lucide-react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Dialog } from '../components/ui/Dialog';
 import { FilterChips } from '../components/ui/Controls';
+import { Pill } from '../components/ui/Pill';
 import { TrendChart } from '../components/ui/TrendChart';
 import { useToast } from '../components/ui/Toast';
 import { slowMovers, topSellers } from '../data/business';
@@ -199,30 +202,122 @@ function markersFor(range, series) {
   }
 }
 
-function RankedList({ title, descriptor, rows }) {
-  const max = Math.max(...rows.map((r) => r.sold));
+const RANK_TONES = ['bg-ink text-white', 'bg-tint-blue text-status-blue', 'bg-tint-amber text-status-amber'];
+
+const rankBadgeClass = (i) => RANK_TONES[i] || 'bg-canvas text-meta ring-1 ring-line';
+
+const rsNumber = (s) => Number(String(s).replace(/[^\d]/g, '')) || 0;
+
+function ItemRow({ item, rank, maxSold, totalUnits, barTone }) {
+  const sharePct = totalUnits ? Math.round((item.sold / totalUnits) * 100) : 0;
+  const widthPct = maxSold ? Math.max(6, (item.sold / maxSold) * 100) : 0;
+  return (
+    <li className="rounded-xl border border-transparent p-2 transition-colors duration-150 ease-soft hover:border-line hover:bg-canvas">
+      <div className="flex items-center gap-3">
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-mono text-xs font-extrabold ${rankBadgeClass(rank)}`}>
+          {rank + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="min-w-0 truncate text-sm font-bold text-ink">{item.name}</p>
+            <p className="shrink-0 font-mono text-sm font-extrabold text-ink">{item.revenue}</p>
+          </div>
+          <div className="mt-1 flex items-center gap-2.5">
+            <span className="h-1.5 w-full overflow-hidden rounded-full bg-line/70">
+              <span className={`block h-full rounded-full ${barTone}`} style={{ width: `${widthPct}%` }} />
+            </span>
+            <span className="shrink-0 font-mono text-[11px] font-semibold text-meta">
+              {item.sold} sold · {sharePct}%
+            </span>
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function TopSellersCard({ rows }) {
+  const maxSold = Math.max(...rows.map((r) => r.sold));
+  const totalUnits = rows.reduce((s, r) => s + r.sold, 0);
+  const totalRevenue = rows.reduce((s, r) => s + rsNumber(r.revenue), 0);
+  const leader = rows[0];
+  const runnerUp = rows[1];
+  const leadPct = leader && runnerUp?.sold ? Math.round(((leader.sold - runnerUp.sold) / runnerUp.sold) * 100) : 0;
+
   return (
     <Card>
-      <div className="mb-4 flex items-end justify-between">
-        <h3 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">{title}</h3>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-meta">{descriptor}</span>
+      <div className="mb-1 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-tint-amber text-status-amber">
+            <TrophyIcon className="h-5 w-5" />
+          </span>
+          <div>
+            <h3 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">Top sellers</h3>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-meta">Best 5 · by units sold</p>
+          </div>
+        </div>
+        <Pill tone="amber" dot>Hot</Pill>
       </div>
-      <ul className="space-y-3">
+
+      {leadPct > 0 && (
+        <p className="mb-3 rounded-xl border border-status-amber/25 bg-tint-amber/40 px-4 py-2.5 text-xs font-semibold text-status-amber">
+          <TrophyIcon className="mr-1.5 inline h-3.5 w-3.5" />
+          {leader.name} outsells #{2} by {leadPct}% — your strongest item.
+        </p>
+      )}
+
+      <ul className="-mx-2 space-y-1">
         {rows.map((r, i) =>
-          <li key={r.name}>
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="flex items-baseline gap-2.5">
-                <span className="font-mono text-xs text-meta">{String(i + 1).padStart(2, '0')}</span>
-                <span className="text-sm font-semibold text-ink">{r.name}</span>
-              </span>
-              <span className="font-mono text-sm text-meta">{r.sold} · {r.revenue}</span>
-            </div>
-            <span className="mt-1.5 block h-1 w-full overflow-hidden rounded-full bg-canvas">
-              <span className="block h-full rounded-full bg-ink/80" style={{ width: `${r.sold / max * 100}%` }} />
-            </span>
-          </li>
+          <ItemRow key={r.name} item={r} rank={i} maxSold={maxSold} totalUnits={totalUnits} barTone={i === 0 ? 'bg-status-amber' : 'bg-ink/75'} />
         )}
       </ul>
+
+      <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-xs">
+        <span className="font-semibold text-meta">Combined revenue</span>
+        <span className="font-mono font-extrabold text-ink">Rs {totalRevenue.toLocaleString('en-IN')}</span>
+      </div>
+    </Card>
+  );
+}
+
+function SlowMoversCard({ rows }) {
+  const maxSold = Math.max(...rows.map((r) => r.sold));
+  const totalUnits = rows.reduce((s, r) => s + r.sold, 0);
+  const totalRevenue = rows.reduce((s, r) => s + rsNumber(r.revenue), 0);
+  const cutCount = rows.filter((r) => r.sold <= 6).length;
+
+  return (
+    <Card>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-tint-red text-status-red">
+            <TrendingDownIcon className="h-5 w-5" />
+          </span>
+          <div>
+            <h3 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">Slowest movers</h3>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-meta">Review or cut</p>
+          </div>
+        </div>
+        {cutCount > 0 && <Pill tone="red">{cutCount} cut candidates</Pill>}
+      </div>
+
+      <ul className="-mx-2 space-y-1">
+        {rows.map((r, i) => (
+          <ItemRow
+            key={r.name}
+            item={r}
+            rank={i}
+            maxSold={maxSold}
+            totalUnits={totalUnits}
+            barTone={r.sold <= 6 ? 'bg-status-red' : 'bg-meta/60'} />
+        ))}
+      </ul>
+
+      <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-xs">
+        <span className="font-semibold text-meta">Tied-up revenue · last 7 days</span>
+        <span className="font-mono font-extrabold text-ink">Rs {totalRevenue.toLocaleString('en-IN')}</span>
+      </div>
     </Card>
   );
 }
@@ -358,8 +453,8 @@ export function Reports() {
           </Card>
 
           <div id="reports-detail" className="grid scroll-mt-24 gap-5 lg:grid-cols-2">
-            <RankedList title="Top sellers" descriptor="Best 5" rows={topSellers} />
-            <RankedList title="Slowest movers" descriptor="Review or cut" rows={slowMovers} />
+            <TopSellersCard rows={topSellers} />
+            <SlowMoversCard rows={slowMovers} />
           </div>
         </div>
     </div>

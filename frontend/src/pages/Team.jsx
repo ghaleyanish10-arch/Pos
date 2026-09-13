@@ -6,6 +6,7 @@ import {
   MessageSquareIcon,
   PencilIcon,
   SendIcon,
+  TrashIcon,
   UserCheckIcon,
   UserPlusIcon,
   UserXIcon } from 'lucide-react';
@@ -17,9 +18,8 @@ import { Field, FilterChips, Toggle, inputClass } from '../components/ui/Control
 import { ActionMenu } from '../components/ui/ActionMenu';
 import { HoverCard, HoverCardContent } from '../components/ui/HoverCard';
 import { useToast } from '../components/ui/Toast';
-import { AttendanceHeatmap } from '../components/ui/AttendanceHeatmap';
 import { shifts, staff, weekDays, laborBudget } from '../data/manage';
-import { attendanceDays, initials, roleFill, roleTone, shiftCount, weeklyHours } from '../data/staff';
+import { initials, roleFill, roleTone, shiftCount, weeklyHours } from '../data/staff';
 
 const seedThread = (person) => [
   { from: 'them', text: `Hey - quick heads up before tomorrow's ${person.role.toLowerCase()} shift.`, time: '18:42' },
@@ -41,7 +41,6 @@ export function Team() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [weekRange, setWeekRange] = useState('This week');
   const [notifyTeam, setNotifyTeam] = useState(true);
-  const [attendanceStaff, setAttendanceStaff] = useState(staff[0].name);
   const [message, setMessage] = useState(null);
   const [threads, setThreads] = useState({});
   const [draft, setDraft] = useState('');
@@ -58,8 +57,6 @@ export function Team() {
     return s + hours;
   }, 0);
   const budgetDiff = totalScheduled - laborBudget.hours;
-
-  const attCols = attendanceDays(attendanceStaff, schedule);
 
   const openAddStaff = () => {
     setEditingStaff(null);
@@ -108,6 +105,69 @@ export function Team() {
     toast(`${person.name} reactivated — reassign shifts`, { tone: 'green' });
   };
 
+  const shiftForm = (selected) => ({
+    start: selected?.shift?.time.split('–')[0] ?? '10',
+    end: selected?.shift?.time.split('–')[1] ?? '18',
+    role: selected?.shift?.role ?? 'Service'
+  });
+
+  const [shiftDraft, setShiftDraft] = useState(shiftForm(selected));
+
+  const openShift = (sel) => {
+    setShiftDraft(shiftForm(sel));
+    setSelected(sel);
+  };
+
+  const saveShift = () => {
+    const start = String(shiftDraft.start).trim() || '10';
+    const end = String(shiftDraft.end).trim() || '18';
+    const role = shiftDraft.role;
+    if (Number(end) === Number(start)) {
+      toast('End time must differ from start', { tone: 'red' });
+      return;
+    }
+    const time = `${start}–${end}`;
+    if (selected?.shift) {
+      const updated = { ...selected.shift, time, role };
+      const prev = schedule;
+      setSchedule((list) => list.map((s) => (s === selected.shift ? updated : s)));
+      toast(`Shift updated · ${weekDays[selected.day]} ${time}`, {
+        undo: () => setSchedule(prev)
+      });
+    } else {
+      const existing = schedule.find(
+        (s) => s.staff === selected.staff && s.day === selected.day && s !== selected.shift);
+      if (existing) {
+        // A shift already exists for this staff member that day — replace it instead of duplicating.
+        const created = { ...existing, time, role };
+        const prev = schedule;
+        setSchedule((list) => list.map((s) => (s === existing ? created : s)));
+        toast(`Replaced existing ${weekDays[selected.day]} shift · ${time}`, {
+          undo: () => setSchedule(prev)
+        });
+      } else {
+        const created = { staff: selected.staff, role, day: selected.day, time };
+        setSchedule((list) => [...list, created]);
+        toast(`${selected.staff} · ${weekDays[selected.day]} ${time} added`, {
+          tone: 'green',
+          undo: () => setSchedule((list) => list.filter((s) => s !== created))
+        });
+      }
+    }
+    setSelected(null);
+  };
+
+  const dropShift = () => {
+    if (!selected?.shift) return;
+    const removed = selected.shift;
+    setSchedule((list) => list.filter((s) => s !== removed));
+    toast(`Shift dropped · ${weekDays[selected.day]} ${removed.time}`, {
+      tone: 'red',
+      undo: () => setSchedule((list) => [...list, removed])
+    });
+    setSelected(null);
+  };
+
   const openMessage = (person) => {
     setMessage(person);
     setThreads((prev) => (prev[person.name] ? prev : { ...prev, [person.name]: seedThread(person) }));
@@ -133,7 +193,7 @@ export function Team() {
     return [
       { label: 'View profile', icon: <EyeIcon className="h-4 w-4" />, onClick: () => navigate(`/team/${person.id}`) },
       { label: 'Message', icon: <MessageSquareIcon className="h-4 w-4" />, onClick: () => openMessage(person) },
-      { label: 'Adjust schedule', icon: <CalendarDaysIcon className="h-4 w-4" />, onClick: () => setSelected({ staff: person.name, day: 3, shift: null }) },
+      { label: 'Adjust schedule', icon: <CalendarDaysIcon className="h-4 w-4" />, onClick: () => openShift({ staff: person.name, day: 3, shift: null }) },
       { label: 'Edit details', icon: <PencilIcon className="h-4 w-4" />, onClick: () => openEditStaff(person) },
       { divider: true },
       { label: 'Deactivate', icon: <UserXIcon className="h-4 w-4" />, danger: true, onClick: () => deactivate(person) }
@@ -256,7 +316,7 @@ export function Team() {
                 <button
                   key={dayIdx}
                   type="button"
-                  onClick={() => setSelected({ staff: person.name, day: dayIdx, shift })}
+                  onClick={() => openShift({ staff: person.name, day: dayIdx, shift })}
                   className="border-l border-line p-1.5 text-left transition-colors duration-150 ease-soft hover:bg-canvas">
                   
                     {shift ?
@@ -322,28 +382,7 @@ export function Team() {
             ))}
           </div>
         </section>
-      }
-
-      <section className="mt-8 rounded-card border border-line bg-surface p-5">
-        <div className="mb-5 flex flex-wrap items-center gap-3">
-          <div className="mr-auto min-w-0">
-            <h2 className="text-sm font-bold text-ink">Attendance</h2>
-            <p className="text-xs text-meta">Clock-in history · last year</p>
-          </div>
-          <FilterChips
-            ariaLabel="Staff attendance"
-            options={activeStaff.map((s) => s.name)}
-            value={attendanceStaff}
-            onChange={setAttendanceStaff} />
-        </div>
-
-        <AttendanceHeatmap
-          cols={attCols}
-          person={activeStaff.find((s) => s.name === attendanceStaff)}
-          key={attendanceStaff} />
-      </section>
-
-      <Drawer
+      }      <Drawer
         open={!!selected}
         onClose={() => setSelected(null)}
         title={selected?.shift ? 'Edit shift' : 'Add shift'}
@@ -353,10 +392,10 @@ export function Team() {
         footer={
         selected?.shift ?
         <>
-              <Button variant="outline" onClick={() => setSelected(null)}>
+              <Button variant="outline" icon={<TrashIcon className="h-4 w-4" />} onClick={dropShift}>
                 Drop shift
               </Button>
-              <Button variant="dark" full onClick={() => setSelected(null)}>
+              <Button variant="dark" full onClick={saveShift}>
                 Save changes
               </Button>
             </> :
@@ -365,7 +404,7 @@ export function Team() {
               <Button variant="outline" onClick={() => setSelected(null)}>
                 Cancel
               </Button>
-              <Button variant="green" full onClick={() => setSelected(null)}>
+              <Button variant="green" full onClick={saveShift}>
                 Add shift
               </Button>
             </>
@@ -375,14 +414,25 @@ export function Team() {
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Start">
-              <input className={inputClass} defaultValue={selected?.shift?.time.split('–')[0] ?? '10'} />
+              <input
+                className={inputClass}
+                inputMode="numeric"
+                value={shiftDraft.start}
+                onChange={(e) => setShiftDraft({ ...shiftDraft, start: e.target.value })} />
             </Field>
             <Field label="End">
-              <input className={inputClass} defaultValue={selected?.shift?.time.split('–')[1] ?? '18'} />
+              <input
+                className={inputClass}
+                inputMode="numeric"
+                value={shiftDraft.end}
+                onChange={(e) => setShiftDraft({ ...shiftDraft, end: e.target.value })} />
             </Field>
           </div>
           <Field label="Role">
-            <select className={inputClass} defaultValue={selected?.shift?.role ?? 'Service'}>
+            <select
+              className={inputClass}
+              value={shiftDraft.role}
+              onChange={(e) => setShiftDraft({ ...shiftDraft, role: e.target.value })}>
               <option>Kitchen</option>
               <option>Service</option>
               <option>Bar</option>

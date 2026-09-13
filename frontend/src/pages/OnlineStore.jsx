@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckIcon, ChevronRightIcon, MonitorIcon, SmartphoneIcon, TabletIcon } from 'lucide-react';
+import { CheckIcon, ChevronRightIcon, ExternalLinkIcon, MonitorIcon, SmartphoneIcon, TabletIcon } from 'lucide-react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Toggle } from '../components/ui/Controls';
@@ -9,10 +9,10 @@ import { StatCard } from '../components/ui/StatCard';
 import { MobileFrame } from '../components/ui/MobileFrame';
 import { Dialog } from '../components/ui/Dialog';
 import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
+import { CustomerStore } from '../components/CustomerStore';
 import { useToast } from '../components/ui/Toast';
-import { menuItems } from '../data/manage';
 import { onlineOrders as initialOrders } from '../data/business';
-import { useSettings } from '../state/SettingsContext';
+import { useOrders } from '../state/OrderContext';
 
 const tabs = ['Theme', 'Delivery zones', 'Payment methods', 'Order sync'];
 
@@ -31,18 +31,7 @@ const statusTone = {
 
 const accentOptions = ['#1C1B19', '#D0342C', '#15803D', '#2563EB'];
 
-const allergenNotes = {
-  'Chicken Momo': 'Contains wheat · chicken · soya',
-  'Momo Jhol': 'Contains wheat · chicken · sesame',
-  'Veg Momo': 'Contains wheat · dairy',
-  'Thakali Set': 'Contains rice · dairy · lentil',
-  'Dal Bhat': 'Contains rice · lentil',
-  'Buff Sekuwa': 'Contains beef · chilli',
-  'Chicken Chilli': 'Contains chicken · soya',
-  'Mint Mojito': 'Contains mint · sugar',
-  'Cheesecake': 'Contains wheat · dairy · egg',
-  'Tiramisu': 'Contains wheat · dairy · egg · coffee'
-};
+const newOrderId = () => `ORD-${9000 + Math.floor(Math.random() * 900)}`;
 
 export function OnlineStore() {
   const [tab, setTab] = useState('Theme');
@@ -52,21 +41,54 @@ export function OnlineStore() {
   const [accent, setAccent] = useState(accentOptions[0]);
   const [showPhotos, setShowPhotos] = useState(true);
   const [showAllergens, setShowAllergens] = useState(false);
-  const { settings } = useSettings();
+  const { addTicket } = useOrders();
   const toast = useToast();
 
   const currentSteps = selectedOrder?.type === 'delivery' ? deliverySteps : steps;
   const currentStepIndex = selectedOrder ? currentSteps.indexOf(selectedOrder.status) : 0;
 
+  // A customer order placed in the live preview (or the customer register)
+  // lands here exactly like a storefront order — visible in Order sync.
+  const handleCustomerOrder = (lines, subtotal) => {
+    const id = newOrderId();
+    const items = lines.map((l) => ({ name: l.name, qty: l.qty, price: l.price }));
+    setOrders((prev) => [
+      {
+        id,
+        customer: 'Customer register',
+        items,
+        address: 'Pickup at counter',
+        type: 'pickup',
+        total: `Rs ${subtotal.toLocaleString('en-IN')}`,
+        status: 'Received',
+        time: 'Just now'
+      },
+      ...prev
+    ]);
+    toast(`${id} received · open Order sync to accept`, { tone: 'green' });
+  };
+
   const handleAccept = () => {
     if (!selectedOrder) return;
+    const isDelivery = selectedOrder.type === 'delivery';
     setOrders((prev) =>
       prev.map((o) =>
         o.id === selectedOrder.id ? { ...o, status: 'Accepted' } : o
       )
     );
     setSelectedOrder((o) => o ? { ...o, status: 'Accepted' } : null);
-    toast(`${selectedOrder.id} accepted`, { tone: 'green' });
+    addTicket({
+      id: selectedOrder.id,
+      type: isDelivery ? 'delivery' : 'takeaway',
+      tag: isDelivery ? 'Own store' : 'Pickup',
+      items: (selectedOrder.items || []).map((i) => `${i.qty}× ${i.name}`),
+      elapsed: '0 min',
+      station: 'Kitchen',
+      payment: 'Online',
+      server: 'Online store',
+      notes: selectedOrder.address || ''
+    });
+    toast(`${selectedOrder.id} accepted · sent to kitchen`, { tone: 'green' });
   };
 
   const handleReject = () => {
@@ -308,84 +330,29 @@ export function OnlineStore() {
         </div>
 
         <div className="order-1 lg:order-2">
-        <MobileFrame label="Online store · mobile app" height={640}>
-            <div className="pt-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-base font-extrabold text-ink">{settings.businessName}</p>
-                  <p className="text-xs text-meta">{settings.city} · 20 min delivery</p>
-                </div>
-                <Pill tone={open ? 'green' : 'red'} dot>
-                  {open ? 'Open' : 'Closed'}
-                </Pill>
-              </div>
-              <div className="mt-3 flex gap-1.5">
-                {['Popular', 'Momo & Snacks', 'Mains', 'Grill', 'Bar', 'Dessert'].map((c) =>
-                <span
-                  key={c}
-                  className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
-                  c === 'Popular' ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-meta'}`
-                  }>
-                  
-                    {c}
-                  </span>
-                )}
-              </div>
-              <div className="mt-3 space-y-2.5">
-                {menuItems.map((item) => {
-                  const initials = item.name.split(' ').map((w) => w[0]).join('').slice(0, 2);
-                  return (
-                    <div
-                      key={item.name}
-                      className="flex items-center gap-3 rounded-xl border border-line bg-surface p-2.5">
-                      
-                  {showPhotos ? (
-                        <img
-                          src={item.photo}
-                          alt=""
-                          className="h-12 w-12 rounded-lg object-cover" />
-                      ) : (
-                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-canvas text-xs font-bold text-meta ring-1 ring-line">
-                          {initials}
-                        </span>
-                      )}
-
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold text-ink">{item.name}</p>
-                        <p className="font-mono text-xs text-meta">{item.price}</p>
-                        {showAllergens && allergenNotes[item.name] && (
-                          <p className="mt-0.5 text-[10px] font-medium text-status-amber">
-                            {allergenNotes[item.name]}
-                          </p>
-                        )}
-                      </div>
-                      <span
-                        className="flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold text-white transition-colors duration-150 ease-soft"
-                        style={{ backgroundColor: accent }}>
-                        +
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              {open &&
-              <div
-                className="sticky bottom-0 mt-4 rounded-xl px-4 py-3 text-center text-sm font-bold text-white transition-colors duration-150 ease-soft"
-                style={{ backgroundColor: accent }}>
-                View cart · Rs 1,130
-              </div>
-              }
-            </div>
+          <MobileFrame label="Live customer view · try it" height={640}>
+            <CustomerStore
+              accent={accent}
+              storefrontOpen={open}
+              showPhotos={showPhotos}
+              showAllergens={showAllergens}
+              onOrderPlaced={handleCustomerOrder} />
           </MobileFrame>
 
           <div className="mt-4 rounded-card border border-line bg-surface p-4">
             <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
-              Customer register preview
+              Customer register
             </p>
             <p className="mt-1 text-xs text-meta">
-              Open the ordering view customers see — on desktop, tablet or phone.
+              The ordering view customers use — same menu, cart and checkout, from their point of view.
             </p>
-            <div className="mt-3 flex gap-1 rounded-full border border-line bg-canvas p-1">
+            <Link
+              to="/register/customer"
+              className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-ink text-sm font-bold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
+              <ExternalLinkIcon className="h-4 w-4" />
+              Open customer register
+            </Link>
+            <div className="mt-2 flex gap-1 rounded-full border border-line bg-canvas p-1">
               {[
                 { key: 'desktop', label: 'Desktop', Icon: MonitorIcon },
                 { key: 'tablet', label: 'Tablet', Icon: TabletIcon },
@@ -394,6 +361,7 @@ export function OnlineStore() {
                 <Link
                   key={key}
                   to={`/register/customer?device=${key}`}
+                  aria-pressed={key === 'phone'}
                   className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors duration-150 ease-soft ${
                     key === 'phone' ? 'bg-ink text-white' : 'text-meta hover:text-ink'
                   }`}>

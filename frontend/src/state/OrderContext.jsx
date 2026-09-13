@@ -36,27 +36,41 @@ export function OrderProvider({ children }) {
     }
   }, [incoming]);
 
+  const addTicket = useCallback((partial) => {
+    const ticket = {
+      id: partial.id || `#${nextId++}`,
+      type: partial.type || 'dine-in',
+      tag: partial.tag || 'Register',
+      items: partial.items || [],
+      elapsed: partial.elapsed || '0 min',
+      created_at: partial.created_at || new Date().toISOString(),
+      station: partial.station || 'Kitchen',
+      modifiers: partial.modifiers || [],
+      timestamps: partial.timestamps || { placed: now(), fired: '—', served: '—' },
+      payment: partial.payment || '',
+      server: partial.server || 'Riya',
+      table: partial.table || '—',
+      notes: partial.notes || '',
+      allergy: partial.allergy || '',
+      ai: !!partial.ai
+    };
+    setIncoming((prev) => (prev.some((t) => t.id === ticket.id) ? prev : [...prev, ticket]));
+    return ticket;
+  }, []);
+
   const addOrder = useCallback((cart, payMethod, { notes = '', allergy = '', server = 'Riya', type = 'dine-in', table = '—' } = {}) => {
     if (cart.length === 0) return null;
-    const id = `#${nextId++}`;
-    const ticket = {
-      id,
+    return addTicket({
       type,
       tag: 'Register',
       items: cart.map((l) => `${l.qty}× ${l.name}`),
-      elapsed: '0 min',
-      station: 'Kitchen',
-      modifiers: [],
-      timestamps: { placed: now(), fired: '—', served: '—' },
       payment: payMethod,
       server,
       table,
       notes,
       allergy
-    };
-    setIncoming((prev) => [...prev, ticket]);
-    return ticket;
-  }, []);
+    });
+  }, [addTicket]);
 
   const removeIncoming = useCallback((id) => {
     setIncoming((prev) => prev.filter((t) => t.id !== id));
@@ -67,8 +81,8 @@ export function OrderProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ incoming, addOrder, removeIncoming, restoreOrder }),
-    [incoming, addOrder, removeIncoming, restoreOrder]
+    () => ({ incoming, addOrder, addTicket, removeIncoming, restoreOrder }),
+    [incoming, addOrder, addTicket, removeIncoming, restoreOrder]
   );
 
   return (

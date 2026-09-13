@@ -8,7 +8,9 @@ import (
 
 	"github.com/mesa-os/backend/internal/auth"
 	"github.com/mesa-os/backend/internal/config"
+	"github.com/mesa-os/backend/internal/email"
 	"github.com/mesa-os/backend/internal/handler"
+	"github.com/mesa-os/backend/internal/mailer"
 	"github.com/mesa-os/backend/internal/middleware"
 	"github.com/mesa-os/backend/internal/repo"
 )
@@ -33,6 +35,9 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	staffRepo := repo.NewStaffRepo(pool)
 	bookingRepo := repo.NewBookingRepo(pool)
 	invoiceRepo := repo.NewInvoiceRepo(pool)
+	smtpMailer := mailer.New(
+		cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFrom,
+	)
 	loyaltyRepo := repo.NewLoyaltyRepo(pool)
 	marketingRepo := repo.NewMarketingRepo(pool)
 	storeRepo := repo.NewStoreRepo(pool)
@@ -50,12 +55,16 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 
 	// Auth service & handler
 	authSvc := auth.NewService(pool)
+	resend := email.New(cfg.RESENDAPIKey, cfg.EmailFrom, cfg.EmailFromName, cfg.AppURL)
 
 	// Handlers
 	authH := handler.NewAuthHandler(authSvc, userRepo, cfg)
+	authH.SetEmail(resend)
 	orderH := handler.NewOrderHandler(orderRepo)
 	ticketH := handler.NewTicketHandler(ticketRepo)
 	txH := handler.NewTransactionHandler(txRepo)
+	txH.SetMailer(smtpMailer)
+	txH.SetOrderRepo(orderRepo)
 	refundH := handler.NewRefundHandler(refundRepo)
 	menuH := handler.NewMenuHandler(menuRepo)
 	inventoryH := handler.NewInventoryHandler(inventoryRepo)
@@ -63,6 +72,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	staffH := handler.NewStaffHandler(staffRepo)
 	bookingH := handler.NewBookingHandler(bookingRepo)
 	invoiceH := handler.NewInvoiceHandler(invoiceRepo)
+	invoiceH.SetMailer(smtpMailer)
 	loyaltyH := handler.NewLoyaltyHandler(loyaltyRepo)
 	marketingH := handler.NewMarketingHandler(marketingRepo)
 	storeH := handler.NewStoreHandler(storeRepo)
@@ -89,6 +99,11 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	api.POST("/auth/refresh", authH.Refresh)
 	api.GET("/health", healthH.Check)
 
+	// Email-verified account flows (public: the user has no session yet)
+	api.POST("/auth/verify-email", authH.VerifyEmail)
+	api.POST("/auth/forgot-password", authH.ForgotPassword)
+	api.POST("/auth/reset-password", authH.ResetPassword)
+
 	// Protected routes
 	protected := api.Group("")
 	protected.Use(authMW)
@@ -112,6 +127,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/transactions", txH.List)
 		protected.POST("/transactions", txH.Create)
 		protected.POST("/transactions/manual", txH.ManualPayment)
+		protected.PUT("/transactions/:id/email", txH.SendByEmail)
 
 		// Refunds
 		protected.GET("/refunds", refundH.List)
@@ -172,6 +188,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/invoices/:id", middleware.RequireRole("Store Manager"), invoiceH.GetByID)
 		protected.POST("/invoices", middleware.RequireRole("Store Manager"), invoiceH.Create)
 		protected.PUT("/invoices/:id", middleware.RequireRole("Store Manager"), invoiceH.Update)
+		protected.PUT("/invoices/:id/email", middleware.RequireRole("Store Manager"), invoiceH.SendByEmail)
 
 		// Loyalty
 		protected.GET("/loyalty/tiers", loyaltyH.ListTiers)

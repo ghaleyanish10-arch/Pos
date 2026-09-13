@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { BarcodeIcon, CopyIcon, Edit2Icon, MinusIcon, PlusIcon, QrCodeIcon, SplitIcon } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Card, PageHeader } from '../components/ui/Card';
@@ -10,7 +10,8 @@ import { Drawer } from '../components/ui/Drawer';
 import { Field, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import { useRole } from '../state/RoleContext';
-import { floorRooms, floorTables, retailCart, tableBill } from '../data/pos';
+import { useTables } from '../state/TableContext';
+import { floorRooms, retailCart, tableBill } from '../data/pos';
 
 const stateTone = {
   Open: 'green',
@@ -51,16 +52,27 @@ function ModeSwitch({
 
 }
 
-const qrFor = (table) => `${window.location.origin}/register?table=${encodeURIComponent(table.name)}`;
+const qrFor = (table) => `${window.location.origin}/register/customer?table=${encodeURIComponent(table.name)}`;
 
 export function FrontOfHouse() {
   const toast = useToast();
   const { role } = useRole();
+  const { tables: floorTables, freeTable, occupiedCount } = useTables();
   const [mode, setMode] = useState('Hospitality');
-  const [selected, setSelected] = useState(floorTables[4]);
+  const [selected, setSelected] = useState(null);
   const [split, setSplit] = useState(0);
   const [heldOrders, setHeldOrders] = useState([]);
   const [filter, setFilter] = useState('All');
+
+  // Keep the detail panel in sync when table states change under it (e.g. a
+  // QR scan seats the selected table) and pick a sensible table on mount.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev && floorTables.some((t) => t.name === prev.name)) return prev;
+      const seated = floorTables.find((t) => t.state !== 'Open');
+      return seated || floorTables[0] || null;
+    });
+  }, [floorTables]);
 
   const canRename = role === 'boss' || role === 'manager';
   const [tableNames, setTableNames] = useState({});
@@ -82,6 +94,7 @@ export function FrontOfHouse() {
 
   const billTotal = tableBill.reduce((s, l) => s + l.amount, 0);
   const cartTotal = retailCart.reduce((s, l) => s + l.qty * l.price, 0);
+  const sel = selected || floorTables[0] || null;
 
   const payKey = useCallback((k) => {
     setPayAmount((prev) => {
@@ -100,13 +113,15 @@ export function FrontOfHouse() {
     setPayAmount('');
     setSplit(0);
     setPayCovers(1);
-    toast.success(`Paid Rs ${amt.toLocaleString('en-IN')} · ${selected.name}`);
-  }, [payAmount, selected.name, toast]);
+    if (mode === 'Hospitality' && selected) freeTable(selected.name);
+    toast.success(`Paid Rs ${amt.toLocaleString('en-IN')} · ${selected ? selected.name : ''} · table open`);
+  }, [payAmount, selected, mode, freeTable, toast]);
 
   const holdOrder = useCallback(() => {
-    setHeldOrders((h) => [...h, { ...selected, heldAt: Date.now() }]);
-    toast(`Order held for ${selected.name}`);
-  }, [selected, toast]);
+    if (!sel) return;
+    setHeldOrders((h) => [...h, { ...sel, heldAt: Date.now() }]);
+    toast(`Order held for ${sel.name}`);
+  }, [sel, toast]);
 
   const resumeOrder = useCallback((order) => {
     setHeldOrders((h) => h.filter((o) => o.name !== order.name));
@@ -114,11 +129,12 @@ export function FrontOfHouse() {
   }, [toast]);
 
   const openVoid = useCallback(() => {
-    setVoidTarget(selected);
+    if (!sel) return;
+    setVoidTarget(sel);
     setVoidReason('');
     setVoidManager('');
     setVoidOpen(true);
-  }, [selected]);
+  }, [sel]);
 
   const confirmVoid = useCallback(() => {
     if (!voidReason || !voidManager.trim()) return;
@@ -126,8 +142,8 @@ export function FrontOfHouse() {
     setVoidReason('');
     setVoidManager('');
     setVoidTarget(null);
-    toast.error(`Check voided · ${selected.name}`);
-  }, [voidReason, voidManager, selected.name, toast]);
+    toast.error(`Check voided · ${voidTarget?.name || ''}`);
+  }, [voidReason, voidManager, voidTarget, toast]);
 
   const activeTables = mode === 'Hospitality'
     ? (filter === 'Held' ? heldOrders : floorTables.filter((t) => heldOrders.every((h) => h.name !== t.name)))
@@ -145,7 +161,7 @@ export function FrontOfHouse() {
     <div className="mx-auto w-full max-w-[1400px]">
       <PageHeader
         title="Front of House"
-        descriptor={mode === 'Hospitality' ? '12 tables · 5 seated' : 'Register 2 · Retail counter'}>
+        descriptor={mode === 'Hospitality' ? `${floorTables.length} tables · ${occupiedCount} seated` : 'Register 2 · Retail counter'}>
         
         <ModeSwitch mode={mode} onChange={setMode} />
       </PageHeader>
@@ -197,9 +213,9 @@ export function FrontOfHouse() {
                   key={t.name}
                   type="button"
                   onClick={() => setSelected(t)}
-                  aria-pressed={selected.name === t.name}
+                  aria-pressed={sel && sel.name === t.name}
                   className={`group rounded-xl border p-4 text-left transition-colors duration-150 ease-soft hover:border-ink/40 ${stateFill[t.state]} ${
-                  selected.name === t.name ? 'ring-2 ring-ink ring-offset-2 ring-offset-surface' : ''}`
+                  sel && sel.name === t.name ? 'ring-2 ring-ink ring-offset-2 ring-offset-surface' : ''}`
                   }>
                   
                     <div className="flex items-center justify-between">
@@ -236,15 +252,15 @@ export function FrontOfHouse() {
           <Card>
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-extrabold text-ink">{renameFor(selected.name)}</h2>
-                <p className="text-sm text-meta">{selected.detail}</p>
+                <h2 className="text-lg font-extrabold text-ink">{renameFor(sel.name)}</h2>
+                <p className="text-sm text-meta">{sel.detail}</p>
               </div>
-              <Pill tone={stateTone[selected.state]} dot>
-                {selected.state}
+              <Pill tone={stateTone[sel.state]} dot>
+                {sel.state}
               </Pill>
             </div>
 
-            {selected.state === 'Needs attention' &&
+            {sel.state === 'Needs attention' &&
           <div className="mt-4">
                 <AlertBanner>Allergy note open · peanuts — confirm with kitchen</AlertBanner>
               </div>
@@ -311,8 +327,8 @@ export function FrontOfHouse() {
             </div>
 
             <div className="mt-5 flex gap-2">
-              {heldOrders.some((h) => h.name === selected.name) ?
-              <Button variant="green" full onClick={() => resumeOrder(selected)}>
+              {heldOrders.some((h) => h.name === sel.name) ?
+              <Button variant="green" full onClick={() => resumeOrder(sel)}>
                   Resume order
                 </Button> :
               <>
@@ -401,7 +417,7 @@ export function FrontOfHouse() {
         open={paymentOpen}
         onClose={() => setPaymentOpen(false)}
         title="Collect payment"
-        subtitle={`${selected.name} · Rs ${billTotal.toLocaleString('en-IN')} due`}
+        subtitle={`${sel ? sel.name : ''} · Rs ${billTotal.toLocaleString('en-IN')} due`}
         width="max-w-md"
         footer={
           <>
@@ -624,8 +640,10 @@ export function FrontOfHouse() {
             </span>
           </div>
           <p className="max-w-[320px] text-center text-xs text-meta">
-            Guests scan this code to open the register menu and place this table's order directly from
-            their phone — no app download required.
+            Guests scan this code to order straight from their phone — the table flips to
+            {' '}<span className="font-semibold text-ink">Seated</span> on the floor plan the moment they
+            open the menu, and every order they place is named after
+            {' '}{qrTarget ? renameFor(qrTarget.name) : 'the table'}. No app download required.
           </p>
         </div>
       </Dialog>

@@ -8,6 +8,7 @@ type Transaction struct {
 	ID         string     `json:"id"`
 	OrderID    *string    `json:"order_id"`
 	Ref        string     `json:"ref"`
+	TableName  string     `json:"table_name"`
 	Method     string     `json:"method"`
 	Amount     float64    `json:"amount"`
 	Status     string     `json:"status"`

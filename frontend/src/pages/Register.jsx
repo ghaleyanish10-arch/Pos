@@ -9,6 +9,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { AlertBanner } from '../components/ui/AlertBanner';
 import { useToast } from '../components/ui/Toast';
 import { useOrders } from '../state/OrderContext';
+import { useTables } from '../state/TableContext';
 import { useMenu } from '../state/MenuContext';
 import { api } from '../api/client';
 import { recipeFor } from '../data/recipes';
@@ -69,6 +70,7 @@ export function Register() {
   const tableParam = searchParams.get('table');
   const toast = useToast();
   const { addOrder } = useOrders();
+  const { occupyTable, markOrdered, freeTable } = useTables();
   const { items: menuItems, categories: categoriesList } = useMenu();
   const [category, setCategory] = useState('All items');
   const [cart, setCart] = useState(readCart);
@@ -111,6 +113,12 @@ export function Register() {
       /* storage unavailable */
     }
   }, [orderTable]);
+
+  // A scan of the table QR landed on the register — the table is occupied from
+  // that moment, and every order placed here is named after that table.
+  useEffect(() => {
+    if (tableParam) occupyTable(tableParam);
+  }, [tableParam, occupyTable]);
 
   const { campaignList } = useCampaigns();
   const campaign = campaignList.find((c) => c.status === 'Scheduled');
@@ -188,6 +196,8 @@ export function Register() {
 
   const confirmPayment = async () => {
     const paid = fmt(total);
+    const paidTable = orderTable || tableParam || '';
+    if (paidTable) markOrdered(paidTable);
     let fallback = false;
     try {
       const order = await api('/orders', {
@@ -214,7 +224,8 @@ export function Register() {
       setPayMethod('Cash');
       setOrderNotes('');
       clearCart();
-      toast.success(`Paid ${paid} · ${payMethod} · Order ${ref} sent to kitchen`);
+      if (paidTable) freeTable(paidTable);
+      toast.success(`Paid ${paid} · ${payMethod} · Order ${ref} sent to kitchen${paidTable ? ` · Table ${paidTable} open` : ''}`);
       return;
     } catch {
       fallback = true;
@@ -226,8 +237,9 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
       setOrderNotes('');
       clearCart();
     if (fallback) {
+      if (paidTable) freeTable(paidTable);
       if (ticket) {
-        toast.success(`Paid ${paid} · ${payMethod} · Ticket ${ticket.id} recorded offline`);
+        toast.success(`Paid ${paid} · ${payMethod} · Ticket ${ticket.id} recorded offline${paidTable ? ` · Table ${paidTable} open` : ''}`);
       } else {
         toast.success(`Paid ${paid} · ${payMethod} · Register 1`);
       }
@@ -244,7 +256,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
       {tableParam &&
       <div className="mb-5">
           <AlertBanner>
-            Scanned from table <span className="font-bold">{tableParam}</span> — this order will be routed to that table.
+            Scanned from table <span className="font-bold">{tableParam}</span> — marked occupied on the floor plan; this order will be named and routed to that table.
           </AlertBanner>
         </div>
       }

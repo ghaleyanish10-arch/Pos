@@ -408,6 +408,80 @@ func TestRegisterEndpoint(t *testing.T) {
 	}
 }
 
+func TestInvoiceEmailEndpoint(t *testing.T) {
+	r, _ := newTestRouter(t)
+	token := loginAdmin(t, r)
+
+	// Create an invoice with line items
+	w := doReq(r, http.MethodPost, "/api/v1/invoices", token, map[string]any{
+		"party":    "Yeti Airlines — corporate dinner",
+		"due_date": "2026-09-30",
+		"items": []map[string]any{
+			{"description": "Catering dinner", "qty": 2, "unit_price": 1850},
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create invoice returned %d: %s", w.Code, w.Body.String())
+	}
+	var inv struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &inv); err != nil {
+		t.Fatalf("decode invoice: %v", err)
+	}
+
+	// SMTP is intentionally not configured in tests: expect 503, never a fake success.
+	w = doReq(r, http.MethodPut, "/api/v1/invoices/"+inv.ID+"/email", token, map[string]string{
+		"to": "client@example.com",
+	})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("email without SMTP returned %d, want 503: %s", w.Code, w.Body.String())
+	}
+
+	// Missing recipient must be rejected before any send attempt.
+	w = doReq(r, http.MethodPut, "/api/v1/invoices/"+inv.ID+"/email", token, map[string]string{})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("email without recipient returned %d, want 400", w.Code)
+	}
+}
+
+func TestTransactionEmailEndpoint(t *testing.T) {
+	r, pool := newTestRouter(t)
+	token := loginAdmin(t, r)
+
+	// Seed a transaction directly (simplest path to a known id).
+	var txID string
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO transactions (ref, method, amount, status) VALUES ('TXN-HTTP-9', 'cash', 1500, 'Success') RETURNING id`,
+	).Scan(&txID); err != nil {
+		t.Fatalf("seed transaction: %v", err)
+	}
+
+	// Missing recipient must be rejected before any send attempt.
+	w := doReq(r, http.MethodPut, "/api/v1/transactions/"+txID+"/email", token, map[string]string{})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("email without recipient returned %d, want 400", w.Code)
+	}
+
+	// SMTP is intentionally not configured in tests: expect 503, never a fake success.
+	w = doReq(r, http.MethodPut, "/api/v1/transactions/"+txID+"/email", token, map[string]string{
+		"to": "guest@example.com",
+	})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("email without SMTP returned %d, want 503: %s", w.Code, w.Body.String())
+	}
+
+	// Unknown transaction id must 404 once a recipient is present.
+	w = doReq(r, http.MethodPut, "/api/v1/transactions/00000000-0000-0000-0000-000000000000/email", token, map[string]string{
+		"to": "guest@example.com",
+	})
+	// With SMTP unconfigured the 503 fires after recipient validation but before
+	// the lookup — so both orderings are acceptable; assert it never 200s.
+	if w.Code == http.StatusOK {
+		t.Errorf("unknown transaction must never return 200")
+	}
+}
+
 func registerCashier(t *testing.T, r *gin.Engine, adminToken string) string {
 	t.Helper()
 	w := doReq(r, http.MethodPost, "/api/v1/auth/register", adminToken, map[string]any{

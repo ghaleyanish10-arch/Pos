@@ -58,7 +58,13 @@ async function request(path, opts) {
     throw err;
   }
   if (!res.ok) {
-    const err = new Error(`request failed: ${res.status}`);
+    let detail = '';
+    try {
+      detail = (await res.json())?.error || '';
+    } catch {
+      /* non-JSON error body */
+    }
+    const err = new Error(detail || `request failed: ${res.status}`);
     err.status = res.status;
     throw err;
   }

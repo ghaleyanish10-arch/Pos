@@ -5,6 +5,7 @@ import { Board, BoardCard, Column, InfoLine } from '../components/ui/Kanban';
 import { AIBadge, Pill } from '../components/ui/Pill';
 import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
+import { useOrders } from '../state/OrderContext';
 import {
   deliveryIncoming,
   deliveryPreparing,
@@ -105,6 +106,7 @@ function DeclineDropdown({ value, onChange }) {
 
 export function Delivery() {
   const toast = useToast();
+  const { addTicket } = useOrders();
   const [orders, setOrders] = useState(() => ({
     incoming: deliveryIncoming.map((o) => ({ ...o, status: 'pending' })),
     preparing: deliveryPreparing.map((o) => ({ ...o, status: 'preparing' })),
@@ -116,14 +118,29 @@ export function Delivery() {
   const [declineReason, setDeclineReason] = useState('');
 
   function handleAccept(orderId) {
+    const order = orders.incoming.find((o) => o.id === orderId);
     setOrders((prev) => ({
       ...prev,
       incoming: prev.incoming.map((o) =>
         o.id === orderId ? { ...o, status: 'accepted', timelineStage: 'Accepted' } : o
       )
     }));
+    if (order) {
+      addTicket({
+        id: order.id,
+        type: 'delivery',
+        tag: order.platform,
+        items: order.items,
+        elapsed: '0 min',
+        station: 'Kitchen',
+        payment: 'Online',
+        server: order.platform,
+        notes: order.courier,
+        ai: order.ai
+      });
+    }
     setExpandedTimeline((prev) => ({ ...prev, [orderId]: true }));
-    toast.success('Order accepted');
+    toast.success('Order accepted · sent to kitchen');
   }
 
   function handleAdvance(orderId) {

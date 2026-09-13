@@ -8,7 +8,7 @@ import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useOrders } from '../state/OrderContext';
 import { api } from '../api/client';
-import { normalizeTicket, shortId } from '../api/normalize';
+import { elapsedFrom, isOverSLA, normalizeTicket, shortId, SLA_MINUTES, useElapsedClock } from '../api/normalize';
 import {
   incomingTickets as initIncomingTickets,
   preparingTickets as initPreparingTickets,
@@ -34,6 +34,36 @@ const ticketTitle = (t) => {
   if (type === 'delivery') return 'Delivery';
   return shortId(t?.id);
 };
+
+/**
+ * Late-ticket banner: shown once a ticket has been on the board
+ * longer than the 15-minute SLA, alongside any allergy note.
+ */
+function TicketBanner({ ticket, onDismiss }) {
+  const overdue = ticket.overSla && !ticket.alertDismissed;
+  if (!ticket.allergy && !overdue) return undefined;
+  const label = ticket.allergy
+    ? overdue ? `${ticket.allergy} · over ${SLA_MINUTES} min` : ticket.allergy
+    : `Over ${SLA_MINUTES} min — needs attention`;
+  return (
+    <AlertBanner
+      action={overdue
+        ? <button
+            type="button"
+            onClick={() => onDismiss(ticket)}
+            className="rounded-full border border-status-red/30 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-status-red transition-colors duration-150 ease-soft hover:bg-status-red hover:text-white">
+            Dismiss
+          </button>
+        : undefined}>
+      {label}
+    </AlertBanner>
+  );
+}
+
+const timeLabel = (t) =>
+  t.overSla && !t.alertDismissed
+    ? <span className="font-bold text-status-red">{t.elapsed} · ALERT</span>
+    : t.elapsed;
 
 function StationTabs({
   value,
@@ -90,6 +120,10 @@ export function KDS() {
   const { incoming: liveIncoming, removeIncoming, restoreOrder } = useOrders();
   const [station, setStation] = useState('Kitchen');
   const [tickets, setTickets] = useState(null);
+  const [dismissedIds, setDismissedIds] = useState([]);
+
+  // Re-render every 30s so elapsed times (and 15-min late alerts) stay live.
+  useElapsedClock();
 
   const load = useCallback(async () => {
     try {
@@ -109,14 +143,31 @@ export function KDS() {
     setTickets((prev) => (prev || []).filter((x) => x.id !== t.id));
   }, []);
 
+  const dismissAlert = useCallback((t) => {
+    setDismissedIds((prev) => (prev.includes(t.id) ? prev : [...prev, t.id]));
+    toast(`Late ticket ${t.id} acknowledged`);
+  }, [toast]);
+
   const liveFired = liveIncoming.filter((t) => t.station === station);
   const all = tickets || [];
   const fired = all.filter((t) => t.station === station && t.status === 'incoming');
   const cooking = all.filter((t) => t.station === station && t.status === 'preparing');
   const pass = all.filter((t) => t.station === station && t.status === 'ready');
-  const displayedFired = [...liveFired, ...fired];
-  const displayedCooking = cooking;
-  const displayedPass = pass;
+  // Recompute from created_at each tick so live tickets age and hit the 15-min alert.
+  const withSla = (t) => {
+    const elapsed = t.created_at ? elapsedFrom(t.created_at) : (t.elapsed || '0 min');
+    return {
+      ...t,
+      elapsed,
+      overSla: isOverSLA(elapsed),
+      alertDismissed: dismissedIds.includes(t.id)
+    };
+  };
+  const displayedFired = [...liveFired, ...fired].map(withSla);
+  const displayedCooking = cooking.map(withSla);
+  const displayedPass = pass.map(withSla);
+  const lateCount = [...displayedFired, ...displayedCooking, ...displayedPass]
+    .filter((t) => t.overSla && !t.alertDismissed).length;
 
   const fireTicket = useCallback((ticket) => {
     const isLive = liveIncoming.some((x) => x.id === ticket.id);
@@ -196,7 +247,7 @@ export function KDS() {
     <div className="mx-auto w-full max-w-[1400px]">
       <PageHeader
         title="Kitchen Display"
-        descriptor={`${station} station · ${displayedFired.length + displayedCooking.length + displayedPass.length} live tickets`}>
+        descriptor={`${station} station · ${displayedFired.length + displayedCooking.length + displayedPass.length} live tickets${lateCount ? ` · ${lateCount} over ${SLA_MINUTES} min` : ''}`}>
         
         <StationTabs value={station} onChange={setStation} />
       </PageHeader>
@@ -218,7 +269,9 @@ export function KDS() {
             id={ticketTitle(t)}
             tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
-            right={t.elapsed}
+            right={timeLabel(t)}
+            rightTone={t.overSla && !t.alertDismissed ? 'red' : undefined}
+            accent={t.overSla && !t.alertDismissed ? 'red' : undefined}
             badge={
             <span className="flex flex-wrap items-center gap-1.5">
                 <TypeBadge type={t.type} />
@@ -231,7 +284,7 @@ export function KDS() {
               }
               </span>
             }
-            banner={t.allergy ? <AlertBanner>{t.allergy}</AlertBanner> : undefined}
+            banner={<TicketBanner ticket={t} onDismiss={dismissAlert} />}
             footer={
             <>
                   <Button size="sm" variant="outline" icon={<FlameIcon className="h-3.5 w-3.5" />} onClick={() => fireTicket(t)}>
@@ -254,9 +307,9 @@ export function KDS() {
             key={t.id}
             id={ticketTitle(t)}
             tag={cardTag(t)}
-            right={t.elapsed}
-            rightTone={t.fired ? 'red' : undefined}
-            accent={t.fired ? 'red' : undefined}
+            right={timeLabel(t)}
+            rightTone={(t.overSla && !t.alertDismissed) || t.fired ? 'red' : undefined}
+            accent={(t.overSla && !t.alertDismissed) || t.fired ? 'red' : undefined}
             badge={
             <span className="flex flex-wrap items-center gap-1.5">
                 <TypeBadge type={t.type} />
@@ -300,7 +353,9 @@ export function KDS() {
             id={ticketTitle(t)}
             tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
-            right={t.elapsed}
+            right={timeLabel(t)}
+            rightTone={t.overSla && !t.alertDismissed ? 'red' : undefined}
+            accent={t.overSla && !t.alertDismissed ? 'red' : undefined}
             badge={
             <span className="flex flex-wrap items-center gap-1.5">
                 <TypeBadge type={t.type} />

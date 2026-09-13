@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { PlusIcon, Trash2Icon } from 'lucide-react';
+import { MessageCircleIcon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Tabs, Field, FilterChips, inputClass } from '../components/ui/Controls';
@@ -7,6 +7,7 @@ import { AlertBanner } from '../components/ui/AlertBanner';
 import { Pill } from '../components/ui/Pill';
 import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
 import { DetailDrawer, DetailRow, DetailSection } from '../components/ui/DetailDrawer';
+import { Dialog } from '../components/ui/Dialog';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
@@ -33,6 +34,35 @@ function isOverdue(inv) {
   return inv.status === 'Sent' && inv.due_date && new Date(inv.due_date) < new Date();
 }
 
+// Pull a usable email address out of whatever the invoice/parties carry.
+function partyEmail(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(c.trim())) return c.trim();
+  }
+  return '';
+}
+
+function invoiceRef(inv) {
+  const id = String(inv.id || '');
+  const i = id.indexOf('-');
+  return i > 0 && i < 4 ? id : `INV-${id.slice(0, 4).toUpperCase()}`;
+}
+
+function invoiceAmount(inv) {
+  return typeof inv.amount === 'number' ? inv.amount : 0;
+}
+
+function invoiceWhatsAppText(inv) {
+  const lines = (inv.items || [])
+    .map((l) => `• ${l.description} × ${l.qty} — Rs ${(l.qty * l.unit_price).toLocaleString('en-IN')}`)
+    .join('\n');
+  return [
+    `Hello, here is invoice ${invoiceRef(inv)}.`,
+    lines ? `\nItems:\n${lines}` : '',
+    `\nAmount: Rs ${invoiceAmount(inv).toLocaleString('en-IN')}`,`\nDue: ${inv.due_date ? shortDue(inv.due_date) : inv.due || '—'}`,`\nThank you.`,
+  ].join('');
+}
+
 const emptyLine = { description: '', qty: 1, unit_price: null };
 
 export function Invoices() {
@@ -43,6 +73,9 @@ export function Invoices() {
   const [delivery, setDelivery] = useState('Email');
   const [invoiceList, setInvoiceList] = useState(null);
   const [active, setActive] = useState(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
   const [party, setParty] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [items, setItems] = useState([{ ...emptyLine }]);
@@ -151,6 +184,51 @@ export function Invoices() {
     } catch {
       setActive(inv);
     }
+  }
+
+  function openWhatsApp(inv) {
+    const text = encodeURIComponent(invoiceWhatsAppText(inv));
+    window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer');
+    toast('WhatsApp opened — pick the chat to send the invoice', { tone: 'green' });
+  }
+
+  function openEmailDialog(inv) {
+    setEmailTo(partyEmail(active?.email, active?.party, inv?.email, inv?.party));
+    setEmailOpen(true);
+  }
+
+  async function sendReceiptEmail() {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailTo.trim())) {
+      toast('Enter a valid email address', { tone: 'red' });
+      return;
+    }
+    setEmailSending(true);
+    try {
+      const res = await api(`/invoices/${active.id}/email`, {
+        method: 'PUT',
+        body: { to: emailTo.trim() }
+      });
+      toast(res?.message || `Receipt emailed to ${emailTo.trim()}`, { tone: 'green' });
+      setEmailOpen(false);
+      setInvoiceList((prev) =>
+        (prev || []).map((i) => (i.id === active.id && i.status === 'Draft' ? { ...i, status: 'Sent' } : i)));
+      if (active.status === 'Draft') setActive({ ...active, status: 'Sent' });
+      load();
+    } catch (e) {
+      if (e?.status === 503) {
+        toast('SMTP not configured on the server — opening your mail app instead', { tone: 'amber' });
+        window.location.href = mailtoReceipt(active, emailTo.trim());
+        setEmailOpen(false);
+      } else {
+        toast(e?.message || 'Could not send email — API offline', { tone: 'red' });
+      }
+    } finally {
+      setEmailSending(false);
+    }
+  }
+
+  function mailtoReceipt(inv, to) {
+    return `mailto:${to}?subject=${encodeURIComponent(`Invoice ${invoiceRef(inv)} — ${rs(invoiceAmount(inv))}`)}&body=${encodeURIComponent(invoiceWhatsAppText(inv))}`;
   }
 
   const chasing = rows.filter((i) => i.status === 'Overdue' || isOverdue(i));
@@ -409,7 +487,14 @@ export function Invoices() {
                   </Button>
                 </>
               )}
-              <Button variant="outline" full onClick={() => { toast(`Receipt emailed to ${active.party}`, { tone: 'green' }); setActive(null); }}>
+              <Button
+                variant="outline"
+                full
+                icon={<MessageCircleIcon className="h-4 w-4" />}
+                onClick={() => openWhatsApp(active)}>
+                WhatsApp invoice
+              </Button>
+              <Button variant="outline" full icon={<SendIcon className="h-4 w-4" />} onClick={() => openEmailDialog(active)}>
                 Email receipt
               </Button>
             </>
@@ -446,6 +531,41 @@ export function Invoices() {
             )
           )}
         </DetailDrawer>
+      )}
+
+      {active && (
+        <Dialog
+          open={emailOpen}
+          onClose={() => !emailSending && setEmailOpen(false)}
+          title="Email receipt"
+          subtitle={`${invoiceRef(active)} · ${active.party}`}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setEmailOpen(false)} disabled={emailSending}>
+                Cancel
+              </Button>
+              <Button variant="green" onClick={sendReceiptEmail} disabled={emailSending}>
+                {emailSending ? 'Sending…' : 'Send receipt'}
+              </Button>
+            </>
+          }>
+          <div className="space-y-4">
+            <Field label="Send to">
+              <input
+                className={inputClass}
+                type="email"
+                placeholder="client@company.com"
+                value={emailTo}
+                autoFocus
+                onChange={(e) => setEmailTo(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') sendReceiptEmail(); }} />
+            </Field>
+            <p className="rounded-xl border border-line bg-canvas p-3 text-xs text-meta">
+              A real email is sent via the restaurant's SMTP account. If the server has no SMTP
+              configured, your mail app opens with the receipt prefilled instead.
+            </p>
+          </div>
+        </Dialog>
       )}
     </div>
   );
