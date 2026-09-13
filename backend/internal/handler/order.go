@@ -2,11 +2,14 @@ package handler
 
 import (
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mesa-os/backend/internal/model"
 	"github.com/mesa-os/backend/internal/repo"
 )
+
+var tableUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type OrderHandler struct {
 	repo *repo.OrderRepo
@@ -46,9 +49,18 @@ func (h *OrderHandler) Create(c *gin.Context) {
 
 	branchID, _ := c.Get("branch_id")
 
+	tableID := req.TableID
+	if tableID != "" && !tableUUIDRe.MatchString(tableID) {
+		if resolved, err := h.repo.ResolveTableID(c.Request.Context(), tableID); err == nil {
+			tableID = resolved
+		} else {
+			tableID = ""
+		}
+	}
+
 	order := &model.Order{
 		Type:     req.Type,
-		TableID:  &req.TableID,
+		TableID:  &tableID,
 		GuestID:  &req.GuestID,
 		BranchID: strPtr(branchID.(string)),
 	}

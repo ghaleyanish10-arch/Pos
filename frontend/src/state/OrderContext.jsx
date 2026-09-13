@@ -36,7 +36,7 @@ export function OrderProvider({ children }) {
     }
   }, [incoming]);
 
-  const addOrder = useCallback((cart, payMethod, { notes = '', allergy = '', server = 'Riya', type = 'dine-in' } = {}) => {
+  const addOrder = useCallback((cart, payMethod, { notes = '', allergy = '', server = 'Riya', type = 'dine-in', table = '—' } = {}) => {
     if (cart.length === 0) return null;
     const id = `#${nextId++}`;
     const ticket = {
@@ -50,7 +50,7 @@ export function OrderProvider({ children }) {
       timestamps: { placed: now(), fired: '—', served: '—' },
       payment: payMethod,
       server,
-      table: '—',
+      table,
       notes,
       allergy
     };

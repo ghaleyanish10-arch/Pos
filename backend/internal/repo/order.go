@@ -83,6 +83,12 @@ func (r *OrderRepo) GetItems(ctx context.Context, orderID string) ([]model.Order
 	return items, nil
 }
 
+func (r *OrderRepo) ResolveTableID(ctx context.Context, table string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, `SELECT id FROM floor_tables WHERE name = $1`, table).Scan(&id)
+	return id, err
+}
+
 func (r *OrderRepo) Create(ctx context.Context, o *model.Order, items []model.CreateOrderItemReq) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

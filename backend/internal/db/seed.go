@@ -55,6 +55,10 @@ func Seed(pool *pgxpool.Pool) error {
 		return err
 	}
 
+	if err := assignDemoTables(ctx, pool); err != nil {
+		return err
+	}
+
 	if err := seedInventory(ctx, pool, branchID); err != nil {
 		return err
 	}
@@ -174,15 +178,7 @@ func ensureStoreSettings(ctx context.Context, pool *pgxpool.Pool, branchID strin
 }
 
 func seedTables(ctx context.Context, pool *pgxpool.Pool, branchID string) error {
-	var exists bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM floor_tables)`).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-
-	for _, t := range []struct {
+	tables := []struct {
 		Name   string
 		Seats  int
 		State  string
@@ -192,8 +188,29 @@ func seedTables(ctx context.Context, pool *pgxpool.Pool, branchID string) error 
 		{Name: "T2", Seats: 4, State: "Open", Detail: ""},
 		{Name: "T3", Seats: 4, State: "Open", Detail: ""},
 		{Name: "T4", Seats: 6, State: "Occupied", Detail: "Riya"},
+		{Name: "T5", Seats: 4, State: "Open", Detail: ""},
+		{Name: "T6", Seats: 2, State: "Open", Detail: ""},
+		{Name: "T7", Seats: 4, State: "Open", Detail: ""},
+		{Name: "T8", Seats: 2, State: "Open", Detail: ""},
+		{Name: "T9", Seats: 4, State: "Open", Detail: ""},
+		{Name: "T10", Seats: 2, State: "Open", Detail: ""},
+		{Name: "T11", Seats: 6, State: "Open", Detail: ""},
+		{Name: "T12", Seats: 6, State: "Open", Detail: ""},
 		{Name: "Bar", Seats: 0, State: "Open", Detail: "Counter"},
-	} {
+	}
+
+	for _, t := range tables {
+		var exists bool
+		if err := pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM floor_tables WHERE name = $1 AND branch_id = $2)`,
+			t.Name, branchID,
+		).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+
 		if _, err := pool.Exec(ctx,
 			`INSERT INTO floor_tables (name, seats, state, detail, branch_id) VALUES ($1, $2, $3, $4, $5)`,
 			t.Name, t.Seats, t.State, t.Detail, branchID,
@@ -202,6 +219,27 @@ func seedTables(ctx context.Context, pool *pgxpool.Pool, branchID string) error 
 		}
 	}
 	return nil
+}
+
+// assignDemoTables gives in-house orders without an assigned table a demo table
+// (cycling the floor tables) so kitchen boards always show a table number.
+func assignDemoTables(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, `
+		WITH candidate AS (
+			SELECT o.id, row_number() OVER (ORDER BY o.created_at) AS rn
+			FROM orders o
+			WHERE o.table_id IS NULL AND o.type = 'dine-in'
+		),
+		tbl AS (
+			SELECT ft.id, row_number() OVER (ORDER BY ft.name) AS rn
+			FROM floor_tables ft
+		)
+		UPDATE orders o
+		SET table_id = tbl.id
+		FROM candidate c
+		JOIN tbl ON tbl.rn = ((c.rn - 1) % (SELECT count(*) FROM tbl)) + 1
+		WHERE o.id = c.id`)
+	return err
 }
 
 var seedInventoryData = []struct {

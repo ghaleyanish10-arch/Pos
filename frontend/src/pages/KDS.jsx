@@ -8,7 +8,7 @@ import { Button } from '../components/ui/Button';
 import { useToast } from '../components/ui/Toast';
 import { useOrders } from '../state/OrderContext';
 import { api } from '../api/client';
-import { normalizeTicket } from '../api/normalize';
+import { normalizeTicket, shortId } from '../api/normalize';
 import {
   incomingTickets as initIncomingTickets,
   preparingTickets as initPreparingTickets,
@@ -25,6 +25,15 @@ const cardTag = (t) =>
   String(t?.tag || '').toLowerCase() === String(t?.type || 'dine-in').toLowerCase()
     ? undefined
     : t?.tag;
+
+const ticketTitle = (t) => {
+  const table = String(t?.table || '').trim();
+  if (table && table !== '—') return `Table ${table}`;
+  const type = String(t?.type || 'dine-in').toLowerCase();
+  if (type === 'takeaway') return 'Takeaway';
+  if (type === 'delivery') return 'Delivery';
+  return shortId(t?.id);
+};
 
 function StationTabs({
   value,
@@ -206,7 +215,7 @@ export function KDS() {
           {displayedFired.map((t) =>
           <BoardCard
             key={t.id}
-            id={t.id}
+            id={ticketTitle(t)}
             tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
@@ -243,7 +252,7 @@ export function KDS() {
           {displayedCooking.map((t) =>
           <BoardCard
             key={t.id}
-            id={t.id}
+            id={ticketTitle(t)}
             tag={cardTag(t)}
             right={t.elapsed}
             rightTone={t.fired ? 'red' : undefined}
@@ -288,7 +297,7 @@ export function KDS() {
           {displayedPass.map((t) =>
           <BoardCard
             key={t.id}
-            id={t.id}
+            id={ticketTitle(t)}
             tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}

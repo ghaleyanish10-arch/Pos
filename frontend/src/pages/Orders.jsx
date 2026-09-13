@@ -9,7 +9,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { useToast } from '../components/ui/Toast';
 import { useOrders } from '../state/OrderContext';
 import { api } from '../api/client';
-import { normalizeTicket } from '../api/normalize';
+import { normalizeTicket, shortId } from '../api/normalize';
 import {
   incomingTickets as initIncoming,
   preparingTickets as initPreparing,
@@ -25,6 +25,15 @@ const cardTag = (t) =>
   String(t?.tag || '').toLowerCase() === String(t?.type || 'dine-in').toLowerCase()
     ? undefined
     : t?.tag;
+
+const ticketTitle = (t) => {
+  const table = String(t?.table || '').trim();
+  if (table && table !== '—') return `Table ${table}`;
+  const type = String(t?.type || 'dine-in').toLowerCase();
+  if (type === 'takeaway') return 'Takeaway';
+  if (type === 'delivery') return 'Delivery';
+  return shortId(t?.id);
+};
 
 function Items({ ticket }) {
   return (
@@ -121,7 +130,7 @@ export function Orders() {
           {visibleIncoming.map((t) =>
           <BoardCard
             key={t.id}
-            id={t.id}
+            id={ticketTitle(t)}
             tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
@@ -156,10 +165,9 @@ export function Orders() {
 
         <Column title="Preparing" tone="amber" count={preparing.length}>
           {preparing.map((t) =>
-          <BoardCard
+<BoardCard
             key={t.id}
-            id={t.id}
-            tag={cardTag(t)}
+            id={ticketTitle(t)}
             right={t.elapsed}
             rightTone={t.fired ? 'red' : undefined}
             accent={t.fired ? 'red' : undefined}
@@ -191,7 +199,7 @@ export function Orders() {
           {ready.map((t) =>
           <BoardCard
             key={t.id}
-            id={t.id}
+            id={ticketTitle(t)}
             tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
@@ -228,7 +236,7 @@ export function Orders() {
       <Drawer
         open={!!detailTicket}
         onClose={() => setDetailTicket(null)}
-        title={detailTicket ? detailTicket.id : ''}
+        title={detailTicket ? ticketTitle(detailTicket) : ''}
         subtitle={detailTicket ? detailTicket.tag : ''}>
         {detailTicket && (
           <div className="space-y-3">

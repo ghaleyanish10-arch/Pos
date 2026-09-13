@@ -8,6 +8,7 @@ type KDSTicket struct {
 	ID              string     `json:"id"`
 	OrderID         string     `json:"order_id"`
 	Type            string     `json:"type"`
+	Table           string     `json:"table"`
 	Tag             string     `json:"tag"`
 	Station         string     `json:"station"`
 	Status          string     `json:"status"`

@@ -203,7 +203,7 @@ export function Register() {
       fallback = true;
     }
 
-const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNotes, type: orderType });
+const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNotes, type: orderType, table: tableParam });
       setPayOpen(false);
       setPayMethod('Cash');
       setOrderNotes('');
@@ -375,6 +375,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
                 {cart.length === 0
                   ? 'No items yet'
                   : `${cart.length} line${cart.length > 1 ? 's' : ''} · ${cart.reduce((s, l) => s + l.qty, 0)} items`}
+                {tableParam && ` · Table ${tableParam}`}
               </p>
             </div>
             <Button variant="quiet" size="sm" onClick={clearCart} disabled={cart.length === 0}>
@@ -496,7 +497,7 @@ const ticket = addOrder(cart, payMethod, { notes: orderNotes, allergy: orderNote
         open={payOpen}
         onClose={() => setPayOpen(false)}
         title="Collect payment"
-        subtitle={`${orderTypeLabel} · ${cart.length} lines · ${fmt(total)} due`}
+        subtitle={`${orderTypeLabel}${tableParam ? ` · Table ${tableParam}` : ''} · ${cart.length} lines · ${fmt(total)} due`}
         width="max-w-md"
         footer={
           <>
