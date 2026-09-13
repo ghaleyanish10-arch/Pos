@@ -1,12 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CalendarDaysIcon,
   EyeIcon,
-  MailIcon,
-  MapPinIcon,
   MessageSquareIcon,
   PencilIcon,
-  PhoneIcon,
   SendIcon,
   UserCheckIcon,
   UserPlusIcon,
@@ -19,123 +17,14 @@ import { Field, FilterChips, Toggle, inputClass } from '../components/ui/Control
 import { ActionMenu } from '../components/ui/ActionMenu';
 import { HoverCard, HoverCardContent } from '../components/ui/HoverCard';
 import { useToast } from '../components/ui/Toast';
+import { AttendanceHeatmap } from '../components/ui/AttendanceHeatmap';
 import { shifts, staff, weekDays, laborBudget } from '../data/manage';
-
-const roleTone = {
-  Kitchen: 'amber',
-  Service: 'blue',
-  Bar: 'purple',
-  Host: 'green'
-};
-
-const roleFill = {
-  Kitchen: 'bg-tint-amber text-status-amber border-status-amber/25',
-  Service: 'bg-tint-blue text-status-blue border-status-blue/25',
-  Bar: 'bg-tint-purple text-status-purple border-status-purple/25',
-  Host: 'bg-tint-green text-status-green border-status-green/25'
-};
-
-const shiftCount = (name, list) => list.filter((s) => s.staff === name).length;
-const initials = (name) => name.split(' ').map((n) => n[0]).join('');
+import { attendanceDays, initials, roleFill, roleTone, shiftCount, weeklyHours } from '../data/staff';
 
 const seedThread = (person) => [
   { from: 'them', text: `Hey - quick heads up before tomorrow's ${person.role.toLowerCase()} shift.`, time: '18:42' },
   { from: 'me', text: 'Got it, thanks. Noted on the schedule.', time: '18:50' }
 ];
-const weeklyHours = (name, list) => {
-  const total = list
-    .filter((s) => s.staff === name)
-    .reduce((sum, sh) => {
-      const [a, b] = sh.time.split('–').map(Number);
-      return sum + (b >= a ? b - a : 24 - a + b);
-    }, 0);
-  return `${total}h`;
-};
-
-const shiftHours = (sh) => {
-  if (!sh) return 0;
-  const [a, b] = sh.time.split('–').map(Number);
-  return b >= a ? b - a : 24 - a + b;
-};
-
-function hashSeed(seed) {
-  let h = seed >>> 0;
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  h ^= h >>> 16;
-  return h / 0xffffffff;
-}
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-const heatLevel = [
-  'bg-line/50',
-  'bg-tint-blue/60',
-  'bg-tint-blue',
-  'bg-status-blue/60',
-  'bg-status-blue'
-];
-
-const heatLabel = ['Absent', 'Short day', 'Standard', 'Long', 'Overtime'];
-
-const statusTone = [
-  'bg-canvas text-meta',
-  'bg-tint-blue/60 text-status-blue',
-  'bg-tint-blue text-status-blue',
-  'bg-status-blue/15 text-status-blue',
-  'bg-status-blue text-white'
-];
-
-const toHm = (total) =>
-  `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-
-const fmtDate = (d) => d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-
-function attendanceDays(personName, shiftList) {
-  const today = new Date();
-  const columns = [];
-  const yearStart = new Date(today.getFullYear(), 0, 1);
-  const firstMonday = new Date(yearStart);
-  firstMonday.setDate(yearStart.getDate() - ((yearStart.getDay() + 6) % 7));
-  const cursor = new Date(firstMonday);
-  while (cursor <= today) {
-    const col = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(cursor);
-      d.setDate(cursor.getDate() + i);
-      if (d > today) break;
-      const weekday = (d.getDay() + 6) % 7;
-      const shift = shiftList.find((s) => s.staff === personName && s.day === weekday);
-      const seed = (d.getFullYear() * 1000000 + (d.getMonth() + 1) * 10000 + d.getDate()) ^
-        personName.split('').reduce((a, c) => a + c.charCodeAt(0), 0) * 7919;
-      const r = hashSeed(seed);
-      let level = 0;
-      if (shift) {
-        level = r < 0.16 ? 0 : shiftHours(shift) >= 9 ? 4 : shiftHours(shift) >= 7 ? 3 : shiftHours(shift) >= 5 ? 2 : 1;
-      } else if (r > 0.94) {
-        level = 1;
-      }
-      const hours = level === 1 ? 5 : level === 2 ? 6 : level === 3 ? 8 : level === 4 ? 10 : 0;
-      const start = level === 4 ? 9 : level === 1 ? 11 : 10;
-      const mins = r < 0.5 ? 0 : r < 0.75 ? 10 : 30;
-      col.push({
-        date: d,
-        weekday,
-        level,
-        monthIndex: d.getMonth(),
-        present: level > 0,
-        hours,
-        clockIn: level > 0 ? toHm(start * 60 + mins) : null,
-        clockOut: level > 0 ? toHm(start * 60 + hours * 60 + mins) : null,
-        scheduled: shift ? `${shift.time} · ${shift.role}` : null,
-        status: level === 0 ? (shift ? 'Leave' : 'Day off') : heatLabel[level]
-      });
-    }
-    columns.push(col);
-    cursor.setDate(cursor.getDate() + 7);
-  }
-  return columns;
-}
 
 const changedStaff = [
 { name: 'Riya Sharma', role: 'Service', change: '+2h moved to Thu' },
@@ -145,6 +34,7 @@ const changedStaff = [
 export function Team() {
   const [selected, setSelected] = useState(null);
   const toast = useToast();
+  const navigate = useNavigate();
 
   const [team, setTeam] = useState(staff);
   const [schedule, setSchedule] = useState(shifts);
@@ -152,8 +42,6 @@ export function Team() {
   const [weekRange, setWeekRange] = useState('This week');
   const [notifyTeam, setNotifyTeam] = useState(true);
   const [attendanceStaff, setAttendanceStaff] = useState(staff[0].name);
-  const [tip, setTip] = useState(null);
-  const [profile, setProfile] = useState(null);
   const [message, setMessage] = useState(null);
   const [threads, setThreads] = useState({});
   const [draft, setDraft] = useState('');
@@ -210,7 +98,6 @@ export function Team() {
     setTeam((prev) =>
       prev.map((p) => (p.name === person.name ? { ...p, active: false } : p)));
     setSchedule((prev) => prev.filter((s) => s.staff !== person.name));
-    if (profile?.name === person.name) setProfile(null);
     if (message?.name === person.name) setMessage(null);
     toast(`${person.name} deactivated · ${removedShifts} shift${removedShifts === 1 ? '' : 's'} removed`, { tone: 'red' });
   };
@@ -244,7 +131,7 @@ export function Team() {
       ];
     }
     return [
-      { label: 'View profile', icon: <EyeIcon className="h-4 w-4" />, onClick: () => setProfile(person) },
+      { label: 'View profile', icon: <EyeIcon className="h-4 w-4" />, onClick: () => navigate(`/team/${person.id}`) },
       { label: 'Message', icon: <MessageSquareIcon className="h-4 w-4" />, onClick: () => openMessage(person) },
       { label: 'Adjust schedule', icon: <CalendarDaysIcon className="h-4 w-4" />, onClick: () => setSelected({ staff: person.name, day: 3, shift: null }) },
       { label: 'Edit details', icon: <PencilIcon className="h-4 w-4" />, onClick: () => openEditStaff(person) },
@@ -252,12 +139,6 @@ export function Team() {
       { label: 'Deactivate', icon: <UserXIcon className="h-4 w-4" />, danger: true, onClick: () => deactivate(person) }
     ];
   };
-
-  const profileShifts = profile ? schedule.filter((s) => s.staff === profile.name) : [];
-  const profileHours = profile
-    ? profileShifts.reduce((s, sh) => s + shiftHours(sh), 0)
-    : 0;
-  const profilePresent = profile ? attendanceDays(profile.name, schedule).flat().filter((d) => d.present).length : 0;
 
   return (
     <div className="mx-auto w-full max-w-[1400px]">
@@ -456,99 +337,11 @@ export function Team() {
             onChange={setAttendanceStaff} />
         </div>
 
-        <div
-          className="flex flex-col gap-2"
-          onMouseLeave={() => setTip(null)}>
-          <div className="flex gap-1">
-            {attCols.map((col, ci) => {
-              const label = ci === 0 || MONTHS[col[3]?.monthIndex] !== MONTHS[attCols[ci - 1][3]?.monthIndex]
-                ? MONTHS[col[3]?.monthIndex]
-                : '';
-              const monthGap = ci > 0 && col[0]?.monthIndex !== attCols[ci - 1][0]?.monthIndex;
-              return (
-                <div
-                  key={ci}
-                  className={`basis-0 flex-1 text-center text-[9px] font-semibold uppercase leading-none tracking-wide text-meta ${monthGap ? 'ml-1' : ''}`}>
-                  {label}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-1">
-            {attCols.map((col, ci) => {
-              const monthGap = ci > 0 && col[0]?.monthIndex !== attCols[ci - 1][0]?.monthIndex;
-              return (
-                <div key={ci} className={`flex basis-0 flex-1 flex-col gap-1 ${monthGap ? 'ml-1' : ''}`}>
-                  {col.map((d, di) => (
-                    <div
-                      key={`${ci}-${di}`}
-                      onMouseMove={(e) => setTip({ x: e.clientX, y: e.clientY, ci, di })}
-                      className={`aspect-square w-full cursor-default rounded-[3px] ${heatLevel[d.level]} transition-transform duration-150 ease-soft hover:scale-125 hover:ring-2 hover:ring-status-blue/40`} />
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-1 flex items-center gap-1 text-[11px] text-meta">
-            <span>Less</span>
-            {heatLevel.slice(1).map((c) => <span key={c} className={`h-[10px] w-[10px] rounded-[3px] ${c}`} />)}
-            <span>More</span>
-            <span className="ml-3">Scheduled shift days over the window, with leave &amp; extras derived from clock-in records.</span>
-          </div>
-        </div>
+        <AttendanceHeatmap
+          cols={attCols}
+          person={activeStaff.find((s) => s.name === attendanceStaff)}
+          key={attendanceStaff} />
       </section>
-
-      {tip && (() => {
-        const cell = attCols[tip.ci]?.[tip.di];
-        if (!cell) return null;
-        const person = activeStaff.find((s) => s.name === attendanceStaff);
-        return (
-          <div
-            className="pointer-events-none fixed z-50 w-64 -translate-x-1/2 -translate-y-full rounded-xl border border-line bg-surface p-4 shadow-pop"
-            style={{ left: tip.x + 1, top: tip.y - 14 }}>
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">{fmtDate(cell.date)}</p>
-                  <p className="mt-0.5 text-sm font-semibold text-ink">
-                    {person?.name}
-                    <span className="ml-1.5 font-mono text-[11px] font-medium text-meta">{person?.role}</span>
-                  </p>
-                </div>
-                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone[cell.level]}`}>
-                  {cell.status}
-                </span>
-              </div>
-
-              {cell.present ? (
-                <div className="rounded-lg border border-line bg-canvas px-3 py-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-meta">Clock in</span>
-                    <span className="font-mono font-bold text-ink">{cell.clockIn}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-xs">
-                    <span className="text-meta">Clock out</span>
-                    <span className="font-mono font-bold text-ink">{cell.clockOut}</span>
-                  </div>
-                  <div className="mt-2 border-t border-dashed border-line pt-2 text-[11px] text-meta">
-                    {cell.hours}h on shift{cell.scheduled && <span> · scheduled {cell.scheduled}</span>}
-                  </div>
-                </div>
-              ) : cell.scheduled ? (
-                <div className="rounded-lg border border-line bg-canvas px-3 py-2 text-[11px] text-meta">
-                  Leave taken · {cell.scheduled} not worked
-                </div>
-              ) : (
-                <div className="rounded-lg border border-line bg-canvas px-3 py-2 text-[11px] text-meta">
-                  No shift scheduled today
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })()}
 
       <Drawer
         open={!!selected}
@@ -703,81 +496,6 @@ export function Team() {
               <Toggle checked={notifyTeam} onChange={setNotifyTeam} label="Notify team" />
             </div>
           </div>
-      </Drawer>
-
-      <Drawer
-        open={!!profile}
-        onClose={() => setProfile(null)}
-        title={profile ? profile.name : ''}
-        subtitle={profile ? `${profile.role} · ${profile.id}` : ''}>
-        {profile && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-4">
-              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-canvas text-base font-bold text-ink ring-1 ring-line">
-                {initials(profile.name)}
-              </span>
-              <div>
-                <Pill tone={roleTone[profile.role]} dot>{profile.role}</Pill>
-                <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-meta">
-                  <span className="h-2 w-2 rounded-full bg-status-green" />
-                  Active · joined {profile.joined}
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-              <div className="flex items-center gap-3 py-1">
-                <MailIcon className="h-4 w-4 text-meta" />
-                <span className="font-mono text-sm text-ink">{profile.email}</span>
-              </div>
-              <div className="mt-1.5 flex items-center gap-3 py-1">
-                <PhoneIcon className="h-4 w-4 text-meta" />
-                <span className="font-mono text-sm text-ink">{profile.phone}</span>
-              </div>
-              <div className="mt-1.5 flex items-center gap-3 py-1">
-                <MapPinIcon className="h-4 w-4 text-meta" />
-                <span className="text-sm text-ink">{profile.station} · Payroll group A</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-line bg-canvas p-3 text-center">
-                <p className="font-mono text-xl font-extrabold text-ink">{profileShifts.length}</p>
-                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-meta">Shifts wk</p>
-              </div>
-              <div className="rounded-xl border border-line bg-canvas p-3 text-center">
-                <p className="font-mono text-xl font-extrabold text-ink">{profileHours}h</p>
-                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-meta">Hours wk</p>
-              </div>
-              <div className="rounded-xl border border-line bg-canvas p-3 text-center">
-                <p className="font-mono text-xl font-extrabold text-ink">{profilePresent}</p>
-                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-widest text-meta">Days yr</p>
-              </div>
-            </div>
-
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">This week</p>
-              {profileShifts.length > 0 ? (
-                <ul className="space-y-1.5">
-                  {profileShifts.map((s, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center justify-between rounded-xl border border-line bg-canvas px-3 py-2 text-sm">
-                      <span className="font-semibold text-ink">{weekDays[s.day]}</span>
-                      <span className="font-mono text-xs text-meta">{s.time} · {s.role}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="rounded-xl border border-line bg-canvas px-3 py-2 text-xs text-meta">No shifts scheduled this week.</p>
-              )}
-            </div>
-
-            <Button variant="dark" full icon={<MessageSquareIcon className="h-4 w-4" />} onClick={() => openMessage(profile)}>
-              Message {profile.name.split(' ')[0]}
-            </Button>
-          </div>
-        )}
       </Drawer>
 
       <Drawer

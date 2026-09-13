@@ -123,7 +123,7 @@ export function OnlineStore() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto]">
-        <div>
+        <div className="order-2 lg:order-1">
           <div className="mb-4 flex flex-wrap gap-2">
             {tabs.map((t) =>
             <button
@@ -306,61 +306,77 @@ export function OnlineStore() {
           </Card>
         </div>
 
-        <MobileFrame label="Live storefront preview">
-          <div className="pt-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-base font-extrabold text-ink">{settings.businessName}</p>
-                <p className="text-xs text-meta">{settings.city} · 20 min delivery</p>
+        <div className="order-1 lg:order-2">
+          <MobileFrame label="Online store · mobile app" height={640}>
+            <div className="pt-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-extrabold text-ink">{settings.businessName}</p>
+                  <p className="text-xs text-meta">{settings.city} · 20 min delivery</p>
+                </div>
+                <Pill tone={open ? 'green' : 'red'} dot>
+                  {open ? 'Open' : 'Closed'}
+                </Pill>
               </div>
-              <Pill tone={open ? 'green' : 'red'} dot>
-                {open ? 'Open' : 'Closed'}
-              </Pill>
-            </div>
-            <div className="mt-3 space-y-2.5">
-              {menuItems.slice(0, 6).map((item) => {
-                const initials = item.name.split(' ').map((w) => w[0]).join('').slice(0, 2);
-                return (
-                  <div
-                    key={item.name}
-                    className="flex items-center gap-3 rounded-xl border border-line bg-surface p-2.5">
-                    
+              <div className="mt-3 flex gap-1.5">
+                {['Popular', 'Momo & Snacks', 'Mains', 'Grill', 'Bar', 'Dessert'].map((c) =>
+                <span
+                  key={c}
+                  className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                  c === 'Popular' ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-meta'}`
+                  }>
+                  
+                    {c}
+                  </span>
+                )}
+              </div>
+              <div className="mt-3 space-y-2.5">
+                {menuItems.map((item) => {
+                  const initials = item.name.split(' ').map((w) => w[0]).join('').slice(0, 2);
+                  return (
+                    <div
+                      key={item.name}
+                      className="flex items-center gap-3 rounded-xl border border-line bg-surface p-2.5">
+                      
                   {showPhotos ? (
-                      <img
-                        src={item.photo}
-                        alt=""
-                        className="h-12 w-12 rounded-lg object-cover" />
-                    ) : (
-                      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-canvas text-xs font-bold text-meta ring-1 ring-line">
-                        {initials}
-                      </span>
-                    )}
-
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-bold text-ink">{item.name}</p>
-                      <p className="font-mono text-xs text-meta">{item.price}</p>
-                      {showAllergens && allergenNotes[item.name] && (
-                        <p className="mt-0.5 text-[10px] font-medium text-status-amber">
-                          {allergenNotes[item.name]}
-                        </p>
+                        <img
+                          src={item.photo}
+                          alt=""
+                          className="h-12 w-12 rounded-lg object-cover" />
+                      ) : (
+                        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-canvas text-xs font-bold text-meta ring-1 ring-line">
+                          {initials}
+                        </span>
                       )}
+
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-bold text-ink">{item.name}</p>
+                        <p className="font-mono text-xs text-meta">{item.price}</p>
+                        {showAllergens && allergenNotes[item.name] && (
+                          <p className="mt-0.5 text-[10px] font-medium text-status-amber">
+                            {allergenNotes[item.name]}
+                          </p>
+                        )}
+                      </div>
+                      <span
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold text-white transition-colors duration-150 ease-soft"
+                        style={{ backgroundColor: accent }}>
+                        +
+                      </span>
                     </div>
-                    <span
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold text-white transition-colors duration-150 ease-soft"
-                      style={{ backgroundColor: accent }}>
-                      +
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+              {open &&
+              <div
+                className="sticky bottom-0 mt-4 rounded-xl px-4 py-3 text-center text-sm font-bold text-white transition-colors duration-150 ease-soft"
+                style={{ backgroundColor: accent }}>
+                View cart · Rs 1,130
+              </div>
+              }
             </div>
-            <div
-              className="sticky bottom-0 mt-4 rounded-xl px-4 py-3 text-center text-sm font-bold text-white transition-colors duration-150 ease-soft"
-              style={{ backgroundColor: accent }}>
-              View cart · Rs 1,130
-            </div>
-          </div>
-        </MobileFrame>
+          </MobileFrame>
+        </div>
       </div>
 
       <Dialog

@@ -46,7 +46,12 @@ export function useRole() {
 }
 
 export function canAccess(role, path) {
-  return ROLE_ALLOWED[role].has(path);
+  const allowed = ROLE_ALLOWED[role];
+  if (allowed.has(path)) return true;
+  for (const p of allowed) {
+    if (p !== '/' && p !== '*' && path.startsWith(p + '/')) return true;
+  }
+  return false;
 
 }
 

@@ -22,7 +22,8 @@ export function AppShell() {
   const [device, setDevice] = useState('desktop');
   const { pathname } = useLocation();
   const { role } = useRole();
-  const current = allNavItems.find((i) => i.path === pathname);
+  const current = allNavItems.find((i) => i.path === pathname) ||
+      allNavItems.find((i) => i.path !== '/' && pathname.startsWith(i.path + '/'));
   const allowed = canAccess(role, pathname);
   const preview = DEVICES.find((d) => d.key === device);
 

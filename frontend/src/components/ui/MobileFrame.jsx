@@ -1,6 +1,7 @@
 export function MobileFrame({
   children,
-  label
+  label,
+  height = 560
 }) {
   return (
     <div className="flex flex-col items-center gap-3">
@@ -8,7 +9,9 @@ export function MobileFrame({
         <div className="flex h-6 items-center justify-center">
           <span className="h-1.5 w-16 rounded-full bg-line" aria-hidden="true" />
         </div>
-        <div className="scroll-thin h-[560px] overflow-y-auto rounded-b-[26px] bg-canvas px-4 pb-6 pt-2">
+        <div
+          className="scroll-thin overflow-y-auto rounded-b-[26px] bg-canvas px-4 pb-6 pt-2"
+          style={{ height }}>
           {children}
         </div>
       </div>

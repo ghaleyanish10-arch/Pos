@@ -4,7 +4,6 @@ import { Card, PageHeader, SectionHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { AlertBanner } from '../components/ui/AlertBanner';
 import { Pill } from '../components/ui/Pill';
-import { MobileFrame } from '../components/ui/MobileFrame';
 import { Drawer } from '../components/ui/Drawer';
 import { Field } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
@@ -197,9 +196,12 @@ export function Feedback() {
 
         <div>
           <SectionHeader index="02" title="Guest survey" descriptor="What guests see" />
-          <MobileFrame label="Scanned from the table QR">
+          <div className="rounded-card border border-line bg-surface p-5">
+            <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              Scanned from the table QR
+            </p>
             <SurveyPreview />
-          </MobileFrame>
+          </div>
         </div>
       </div>
 

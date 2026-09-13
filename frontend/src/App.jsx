@@ -19,6 +19,7 @@ import { Inventory } from './pages/Inventory';
 import { Menu } from './pages/Menu';
 import { Guests } from './pages/Guests';
 import { Team } from './pages/Team';
+import { StaffProfile } from './pages/StaffProfile';
 import { Bookings } from './pages/Bookings';
 import { Reports } from './pages/Reports';
 import { Invoices } from './pages/Invoices';
@@ -62,6 +63,7 @@ export function App() {
             <Route path="/menu" element={<Menu />} />
             <Route path="/guests" element={<Guests />} />
             <Route path="/team" element={<Team />} />
+            <Route path="/team/:id" element={<StaffProfile />} />
             <Route path="/bookings" element={<Bookings />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/invoices" element={<Invoices />} />
