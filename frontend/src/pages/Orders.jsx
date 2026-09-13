@@ -21,6 +21,11 @@ const toLines = (items) =>
     typeof it === 'string' ? it : `${it.qty > 1 ? `${it.qty}x ` : ''}${it.name}`
   );
 
+const cardTag = (t) =>
+  String(t?.tag || '').toLowerCase() === String(t?.type || 'dine-in').toLowerCase()
+    ? undefined
+    : t?.tag;
+
 function Items({ ticket }) {
   return (
     <>
@@ -117,7 +122,7 @@ export function Orders() {
           <BoardCard
             key={t.id}
             id={t.id}
-            tag={t.tag}
+            tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
             badge={
@@ -154,7 +159,7 @@ export function Orders() {
           <BoardCard
             key={t.id}
             id={t.id}
-            tag={t.tag}
+            tag={cardTag(t)}
             right={t.elapsed}
             rightTone={t.fired ? 'red' : undefined}
             accent={t.fired ? 'red' : undefined}
@@ -187,7 +192,7 @@ export function Orders() {
           <BoardCard
             key={t.id}
             id={t.id}
-            tag={t.tag}
+            tag={cardTag(t)}
             tagTone={t.ai ? 'purple' : 'neutral'}
             right={t.elapsed}
             badge={
