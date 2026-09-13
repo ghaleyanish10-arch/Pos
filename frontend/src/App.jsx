@@ -10,6 +10,7 @@ import { NotificationProvider } from './state/Notifications';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { Home } from './pages/Home';
 import { Register } from './pages/Register';
+import { RegisterCustomer } from './pages/RegisterCustomer';
 import { NotFound } from './pages/NotFound';
 import { Orders } from './pages/Orders';
 import { Refunds } from './pages/Refunds';
@@ -55,6 +56,7 @@ export function App() {
           <Route element={<AppShell />}>
             <Route path="/" element={<Home />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/register/customer" element={<RegisterCustomer />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/refunds" element={<Refunds />} />
             <Route path="/transactions" element={<Transactions />} />

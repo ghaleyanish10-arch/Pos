@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { CheckIcon, ChevronRightIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { CheckIcon, ChevronRightIcon, MonitorIcon, SmartphoneIcon, TabletIcon } from 'lucide-react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Toggle } from '../components/ui/Controls';
@@ -307,7 +308,7 @@ export function OnlineStore() {
         </div>
 
         <div className="order-1 lg:order-2">
-          <MobileFrame label="Online store · mobile app" height={640}>
+        <MobileFrame label="Online store · mobile app" height={640}>
             <div className="pt-2">
               <div className="flex items-center justify-between">
                 <div>
@@ -376,6 +377,32 @@ export function OnlineStore() {
               }
             </div>
           </MobileFrame>
+
+          <div className="mt-4 rounded-card border border-line bg-surface p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              Customer register preview
+            </p>
+            <p className="mt-1 text-xs text-meta">
+              Open the ordering view customers see — on desktop, tablet or phone.
+            </p>
+            <div className="mt-3 flex gap-1 rounded-full border border-line bg-canvas p-1">
+              {[
+                { key: 'desktop', label: 'Desktop', Icon: MonitorIcon },
+                { key: 'tablet', label: 'Tablet', Icon: TabletIcon },
+                { key: 'phone', label: 'Phone', Icon: SmartphoneIcon }
+              ].map(({ key, label, Icon }) => (
+                <Link
+                  key={key}
+                  to={`/register/customer?device=${key}`}
+                  className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full text-xs font-semibold transition-colors duration-150 ease-soft ${
+                    key === 'phone' ? 'bg-ink text-white' : 'text-meta hover:text-ink'
+                  }`}>
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
