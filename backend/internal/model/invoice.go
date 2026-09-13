@@ -12,6 +12,7 @@ type Invoice struct {
 	Status    string            `json:"status"`
 	BranchID  *string           `json:"branch_id"`
 	CreatedAt time.Time         `json:"created_at"`
+	ChasedAt  *time.Time        `json:"chased_at"`
 	Items     []InvoiceLineItem `json:"items,omitempty"`
 }
 
@@ -37,4 +38,5 @@ type InvoiceLineItemReq struct {
 
 type UpdateInvoiceRequest struct {
 	Status string `json:"status"`
+	Chased bool   `json:"chased"`
 }

@@ -115,13 +115,32 @@ export function Invoices() {
     }
   }
 
-  async function setStatus(inv, status, message) {
+  async function applyStatus(inv, status, message) {
+    setInvoiceList((prev) =>
+      (prev || []).map((i) => (i.id === inv.id ? { ...i, status } : i))
+    );
+    toast(message, { tone: 'green' });
     try {
       await api(`/invoices/${inv.id}`, { method: 'PUT', body: { status } });
-      toast(message, { tone: 'green' });
       load();
     } catch {
-      toast('API unavailable', { tone: 'red' });
+      // API unreachable — keep the optimistic local update.
+    }
+  }
+
+  async function chaseInvoice(inv) {
+    const chasedAt = new Date();
+    setInvoiceList((prev) =>
+      (prev || []).map((i) =>
+        i.id === inv.id ? { ...i, status: 'Overdue', chased_at: chasedAt.toISOString() } : i
+      )
+    );
+    toast(`Chase sent to ${inv.party}`, { tone: 'green' });
+    try {
+      await api(`/invoices/${inv.id}`, { method: 'PUT', body: { status: 'Overdue', chased: true } });
+      load();
+    } catch {
+      // API unreachable — keep the optimistic local update.
     }
   }
 
@@ -148,7 +167,7 @@ export function Invoices() {
         <AlertBanner
           className="mb-5"
           action={
-            <Button size="sm" variant="red" onClick={() => chasing.forEach((c) => setStatus(c, c.status, `Chase sent to ${c.party}`))}>
+            <Button size="sm" variant="red" onClick={() => chasing.forEach((c) => chaseInvoice(c))}>
               Chase {chasing.length <= 1 ? 'invoice' : `all ${chasing.length}`}
             </Button>
           }>
@@ -320,19 +339,26 @@ export function Invoices() {
                       <Td className="text-right font-mono text-sm font-bold">{inv.amount && typeof inv.amount === 'number' ? rs(inv.amount) : inv.amount}</Td>
                       <Td className="text-sm text-meta">{inv.due_date ? shortDue(inv.due_date) : inv.due}</Td>
                       <Td>
-                        <Pill tone={statusTone[status]} dot>{status}</Pill>
+                        <div className="flex items-center gap-2">
+                          <Pill tone={statusTone[status]} dot>{status}</Pill>
+                          {inv.chased_at && (
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                              Chased · {new Date(inv.chased_at).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
                       </Td>
                       <Td className="text-right">
                         {status === 'Overdue' ? (
-                          <Button size="sm" variant="red" onClick={(e) => { e.stopPropagation(); setStatus(inv, inv.status, `Chase sent to ${inv.party}`); }}>
+                          <Button size="sm" variant="red" onClick={(e) => { e.stopPropagation(); chaseInvoice(inv); }}>
                             Chase
                           </Button>
                         ) : status === 'Draft' ? (
-                          <Button size="sm" variant="dark" onClick={(e) => { e.stopPropagation(); setStatus(inv, 'Sent', `${inv.party} — invoice sent`); }}>
+                          <Button size="sm" variant="dark" onClick={(e) => { e.stopPropagation(); applyStatus(inv, 'Sent', `${inv.party} — invoice sent`); }}>
                             Send
                           </Button>
                         ) : status === 'Sent' ? (
-                          <Button size="sm" variant="green" onClick={(e) => { e.stopPropagation(); setStatus(inv, 'Paid', `${inv.party} — marked paid`); }}>
+                          <Button size="sm" variant="green" onClick={(e) => { e.stopPropagation(); applyStatus(inv, 'Paid', `${inv.party} — marked paid`); }}>
                             Mark paid
                           </Button>
                         ) : (
@@ -369,14 +395,19 @@ export function Invoices() {
           footer={
             <>
               {active.status === 'Draft' && (
-                <Button variant="dark" full onClick={() => { setStatus(active, 'Sent', 'Invoice sent'); setActive(null); }}>
+                <Button variant="dark" full onClick={() => { applyStatus(active, 'Sent', 'Invoice sent'); setActive(null); }}>
                   Send invoice
                 </Button>
               )}
               {(active.status === 'Sent' || isOverdue(active)) && (
-                <Button variant="green" full onClick={() => { setStatus(active, 'Paid', 'Marked as paid'); setActive(null); }}>
-                  Mark as paid
-                </Button>
+                <>
+                  <Button variant="outline" full onClick={() => { chaseInvoice(active); setActive(null); }}>
+                    Chase invoice
+                  </Button>
+                  <Button variant="green" full onClick={() => { applyStatus(active, 'Paid', 'Marked as paid'); setActive(null); }}>
+                    Mark as paid
+                  </Button>
+                </>
               )}
               <Button variant="outline" full onClick={() => { toast(`Receipt emailed to ${active.party}`, { tone: 'green' }); setActive(null); }}>
                 Email receipt
@@ -388,6 +419,9 @@ export function Invoices() {
             <DetailRow label="Due date" value={active.due_date ? shortDue(active.due_date) : active.due} />
             <DetailRow label="Status" value={active.status} badge={<Pill tone={statusTone[isOverdue(active) ? 'Overdue' : active.status]} dot>{isOverdue(active) ? 'Overdue' : active.status}</Pill>} />
             <DetailRow label="Branch" value={active.branch_id ? 'Main branch' : '—'} />
+            {active.chased_at && (
+              <DetailRow label="Last chased" value={new Date(active.chased_at).toLocaleString('en', { dateStyle: 'medium', timeStyle: 'short' })} />
+            )}
             <DetailRow label="Created" value={active.created_at ? shortDue(active.created_at) : '—'} />
           </dl>
 

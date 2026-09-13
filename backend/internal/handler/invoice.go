@@ -74,7 +74,20 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.UpdateStatus(c.Request.Context(), c.Param("id"), req.Status); err != nil {
+	status := req.Status
+	var chasedAt *time.Time
+	if req.Chased {
+		status = "Overdue"
+		ts := time.Now()
+		chasedAt = &ts
+	}
+
+	if status == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
+		return
+	}
+
+	if err := h.repo.UpdateStatus(c.Request.Context(), c.Param("id"), status, chasedAt); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

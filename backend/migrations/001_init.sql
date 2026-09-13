@@ -206,6 +206,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS last_chased_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS invoice_line_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     invoice_id UUID NOT NULL REFERENCES invoices(id),

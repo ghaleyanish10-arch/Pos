@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mesa-os/backend/internal/model"
@@ -16,7 +17,7 @@ func NewInvoiceRepo(db *pgxpool.Pool) *InvoiceRepo {
 }
 
 func (r *InvoiceRepo) List(ctx context.Context, status string) ([]model.Invoice, error) {
-	query := `SELECT id, party, amount, due_date, status, branch_id::text, created_at FROM invoices WHERE 1=1`
+	query := `SELECT id, party, amount, due_date, status, branch_id::text, created_at, last_chased_at FROM invoices WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
 
@@ -37,7 +38,7 @@ func (r *InvoiceRepo) List(ctx context.Context, status string) ([]model.Invoice,
 	var invoices []model.Invoice
 	for rows.Next() {
 		var inv model.Invoice
-		if err := rows.Scan(&inv.ID, &inv.Party, &inv.Amount, &inv.DueDate, &inv.Status, &inv.BranchID, &inv.CreatedAt); err != nil {
+		if err := rows.Scan(&inv.ID, &inv.Party, &inv.Amount, &inv.DueDate, &inv.Status, &inv.BranchID, &inv.CreatedAt, &inv.ChasedAt); err != nil {
 			return nil, err
 		}
 		items, _ := r.GetItems(ctx, inv.ID)
@@ -50,8 +51,8 @@ func (r *InvoiceRepo) List(ctx context.Context, status string) ([]model.Invoice,
 func (r *InvoiceRepo) GetByID(ctx context.Context, id string) (*model.Invoice, error) {
 	var inv model.Invoice
 	err := r.db.QueryRow(ctx,
-		`SELECT id, party, amount, due_date, status, branch_id::text, created_at FROM invoices WHERE id = $1`, id,
-	).Scan(&inv.ID, &inv.Party, &inv.Amount, &inv.DueDate, &inv.Status, &inv.BranchID, &inv.CreatedAt)
+		`SELECT id, party, amount, due_date, status, branch_id::text, created_at, last_chased_at FROM invoices WHERE id = $1`, id,
+	).Scan(&inv.ID, &inv.Party, &inv.Amount, &inv.DueDate, &inv.Status, &inv.BranchID, &inv.CreatedAt, &inv.ChasedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +108,10 @@ func (r *InvoiceRepo) Create(ctx context.Context, inv *model.Invoice, items []mo
 	return tx.Commit(ctx)
 }
 
-func (r *InvoiceRepo) UpdateStatus(ctx context.Context, id, status string) error {
-	_, err := r.db.Exec(ctx, `UPDATE invoices SET status = $1 WHERE id = $2`, status, id)
+func (r *InvoiceRepo) UpdateStatus(ctx context.Context, id, status string, chasedAt *time.Time) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE invoices SET status = $1, last_chased_at = COALESCE($2, last_chased_at) WHERE id = $3`,
+		status, chasedAt, id,
+	)
 	return err
 }
