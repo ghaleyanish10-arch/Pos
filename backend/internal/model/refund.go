@@ -8,12 +8,14 @@ import (
 type Refund struct {
 	ID            string          `json:"id"`
 	TransactionID string          `json:"transaction_id"`
+	TableName     string          `json:"table_name,omitempty"`
 	Items         json.RawMessage `json:"items"`
 	Reason        string          `json:"reason"`
 	Amount        float64         `json:"amount"`
 	Status        string          `json:"status"`
 	LockedBy      *string         `json:"locked_by"`
 	BranchID      *string         `json:"branch_id"`
+	CreatedBy     string          `json:"created_by,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 }
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownRightIcon,
   ArrowRightIcon,
@@ -20,6 +20,7 @@ import { Pill } from '../components/ui/Pill';
 import { TrendChart } from '../components/ui/TrendChart';
 import { useToast } from '../components/ui/Toast';
 import { slowMovers, topSellers } from '../data/business';
+import api from '../api/client';
 
 const WEEK_REV = [62000, 58400, 71200, 86400, 104800, 118600, 81200];
 const HOUR_F = [0.06, 0.04, 0.05, 0.08, 0.12, 0.18, 0.28, 0.45, 0.62, 0.78, 0.85, 0.92, 0.88, 0.72, 0.55, 0.42, 0.34, 0.3];
@@ -63,6 +64,22 @@ function normalize(rows, target) {
   scaled[last] = Math.max(0, scaled[last] + diff);
   return rows.map((d, i) => ({ ...d, sales: scaled[i] }));
 }
+
+const fromRevenue = (r) => {
+  const d = new Date(`${r.date}T12:00:00`);
+  const valid = !Number.isNaN(d.getTime());
+  return {
+    date: r.date || '',
+    label: valid ? d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' }) : '',
+    sales: Number(r.amount) || 0
+  };
+};
+
+const fromSeller = (s) => ({
+  name: s.name || '',
+  sold: Number(s.count) || 0,
+  revenue: '—'
+});
 
 function seriesFor(range) {
   if (range === 'today') {
@@ -330,8 +347,40 @@ export function Reports() {
   const [recurrence, setRecurrence] = useState('Off');
   const toast = useToast();
 
+  const [apiRevenue, setApiRevenue] = useState([]);
+  const [topSellerRows, setTopSellerRows] = useState([]);
+  const [slowMoverRows, setSlowMoverRows] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [revRes, topRes, slowRes] = await Promise.all([
+          api('/reports/revenue'),
+          api('/reports/top-sellers'),
+          api('/reports/slow-movers')
+        ]);
+        if (cancelled) return;
+        const rev = revRes?.data || [];
+        const top = topRes?.data || [];
+        const slow = slowRes?.data || [];
+        if (rev.length > 0) {
+          setApiRevenue(rev.map(fromRevenue).sort((a, b) => a.date.localeCompare(b.date)).slice(-7));
+        }
+        if (top.length > 0) setTopSellerRows(top.map(fromSeller).slice(0, 5));
+        if (slow.length > 0) setSlowMoverRows(slow.map(fromSeller).slice(0, 5));
+      } catch {
+        // keep static demo data as fallback
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const period = PERIODS[range];
-  const series = useMemo(() => seriesFor(range), [range]);
+  const series = useMemo(() => {
+    if (range === '7d' && apiRevenue.length > 0) return apiRevenue;
+    return seriesFor(range);
+  }, [range, apiRevenue]);
   const markers = useMemo(() => markersFor(range, series), [range, series]);
 
   const totalSales = useMemo(() => series.reduce((s, d) => s + d.sales, 0), [series]);
@@ -453,8 +502,8 @@ export function Reports() {
           </Card>
 
           <div id="reports-detail" className="grid scroll-mt-24 gap-5 lg:grid-cols-2">
-            <TopSellersCard rows={topSellers} />
-            <SlowMoversCard rows={slowMovers} />
+            <TopSellersCard rows={topSellerRows.length > 0 ? topSellerRows : topSellers} />
+            <SlowMoversCard rows={slowMoverRows.length > 0 ? slowMoverRows : slowMovers} />
           </div>
         </div>
     </div>

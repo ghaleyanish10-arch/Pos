@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Tabs, inputClass } from '../components/ui/Controls';
@@ -7,6 +7,7 @@ import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
 import { Drawer } from '../components/ui/Drawer';
 import { useToast } from '../components/ui/Toast';
 import { poLineItems, purchaseOrders, suppliers } from '../data/ims';
+import api from '../api/client';
 
 const statusTone = {
   Draft: 'neutral',
@@ -21,6 +22,23 @@ const defaultNewLines = [
   { item: 'Momo wrappers', qty: 600, unit: 'pcs', unitCost: 6, expected: 600, received: 0 }
 ];
 
+const fromPo = (po) => ({
+  id: po.id || '',
+  supplier: po.supplier || '',
+  items: Array.isArray(po.items) ? po.items.length : 0,
+  total: `Rs ${Number(po.total || 0).toLocaleString('en-IN')}`,
+  expected: po.expected_date
+    ? new Date(po.expected_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+    : '—',
+  status: po.status || 'Draft'
+});
+
+const toApiPoLine = (l) => ({
+  ingredient: l.item || '',
+  qty: Number(l.qty) || 0,
+  unit_cost: Number(l.unitCost) || 0
+});
+
 export function PurchaseOrders() {
   const toast = useToast();
   const [tab, setTab] = useState('All');
@@ -31,6 +49,21 @@ export function PurchaseOrders() {
   const [nextId, setNextId] = useState(415);
   const [receivePo, setReceivePo] = useState(null);
   const [receiveLines, setReceiveLines] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/purchase-orders');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) setPoList(data.map(fromPo));
+      } catch {
+        // keep static demo data as fallback
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const counts = poList.reduce((acc, p) => {
     acc[p.status] = (acc[p.status] ?? 0) + 1;
@@ -59,6 +92,10 @@ export function PurchaseOrders() {
     setBuilding(false);
     setNewLines(defaultNewLines.map((l) => ({ ...l })));
     toast.success('Draft saved');
+    api('/purchase-orders', {
+      method: 'POST',
+      body: { supplier: newSupplier, expected_date: '', items: newLines.map(toApiPoLine) }
+    }).catch(() => {});
   };
 
   const handleSendToSupplier = () => {
@@ -71,10 +108,21 @@ export function PurchaseOrders() {
     setBuilding(false);
     setNewLines(defaultNewLines.map((l) => ({ ...l })));
     toast.success(`PO sent to ${newSupplier}`);
+    api('/purchase-orders', {
+      method: 'POST',
+      body: { supplier: newSupplier, expected_date: '', items: newLines.map(toApiPoLine) }
+    })
+      .then((created) => {
+        if (created?.id) api(`/purchase-orders/${created.id}`, { method: 'PUT', body: { status: 'Sent' } }).catch(() => {});
+      })
+      .catch(() => {});
   };
 
   const openReceive = (po) => {
-    const lines = poLineItems.map((l) => ({ ...l, expected: l.qty, received: l.qty }));
+    const src = Array.isArray(po.items) && po.items.length > 0
+      ? po.items.map((it) => ({ item: it.ingredient || '', qty: Number(it.qty) || 0, unitCost: Number(it.unit_cost) || 0, unit: '' }))
+      : poLineItems;
+    const lines = src.map((l) => ({ ...l, expected: l.qty, received: l.qty }));
     setReceivePo(po);
     setReceiveLines(lines);
   };
@@ -97,6 +145,9 @@ export function PurchaseOrders() {
     );
     setReceivePo(null);
     toast.success('PO fully received');
+    if (receivePo?.id) {
+      api(`/purchase-orders/${receivePo.id}/receive`, { method: 'PUT' }).catch(() => {});
+    }
   };
 
   const savePartial = () => {
@@ -111,6 +162,9 @@ export function PurchaseOrders() {
     const receivedUnits = receiveTotal;
     setReceivePo(null);
     toast.success(`Partial receive saved · ${receivedUnits} units added to inventory`);
+    if (receivePo?.id) {
+      api(`/purchase-orders/${receivePo.id}`, { method: 'PUT', body: { status: allMatch ? 'Received' : 'Partially Received' } }).catch(() => {});
+    }
   };
 
   return (

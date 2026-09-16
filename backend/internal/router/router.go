@@ -50,6 +50,8 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	deliveryRepo := repo.NewDeliveryRepo(pool)
 	feedbackRepo := repo.NewFeedbackRepo(pool)
 	permissionRepo := repo.NewPermissionRepo(pool)
+	elevationRepo := repo.NewElevationRepo(pool)
+	deviceRepo := repo.NewDeviceRepo(pool)
 	auditRepo := repo.NewAuditRepo(pool)
 	reportRepo := repo.NewReportRepo(pool)
 
@@ -60,12 +62,15 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	// Handlers
 	authH := handler.NewAuthHandler(authSvc, userRepo, cfg)
 	authH.SetEmail(resend)
+	elevationH := handler.NewElevationHandler(elevationRepo, auditRepo, authSvc, cfg)
+	clockinH := handler.NewClockInHandler(elevationRepo, deviceRepo, auditRepo, cfg)
 	orderH := handler.NewOrderHandler(orderRepo)
 	ticketH := handler.NewTicketHandler(ticketRepo)
 	txH := handler.NewTransactionHandler(txRepo)
 	txH.SetMailer(smtpMailer)
 	txH.SetOrderRepo(orderRepo)
 	refundH := handler.NewRefundHandler(refundRepo)
+	refundH.SetElevationDeps(elevationRepo, auditRepo)
 	menuH := handler.NewMenuHandler(menuRepo)
 	inventoryH := handler.NewInventoryHandler(inventoryRepo)
 	guestH := handler.NewGuestHandler(guestRepo)
@@ -97,12 +102,35 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	// Public routes
 	api.POST("/auth/login", authH.Login)
 	api.POST("/auth/refresh", authH.Refresh)
-	api.GET("/health", healthH.Check)
+	api.GET("/health", healthH.Check)		// Email-verified account flows (public: the user has no session yet)
+		api.POST("/auth/verify-email", authH.VerifyEmail)
+		api.POST("/auth/forgot-password", authH.ForgotPassword)
+		api.POST("/auth/reset-password", authH.ResetPassword)
 
-	// Email-verified account flows (public: the user has no session yet)
-	api.POST("/auth/verify-email", authH.VerifyEmail)
-	api.POST("/auth/forgot-password", authH.ForgotPassword)
-	api.POST("/auth/reset-password", authH.ResetPassword)
+		// Customer ordering (public: a scanned table QR or storefront link has
+		// no session). The order lands in the orders table and KDS as an
+		// incoming ticket, so staff Orders/KDS pick it up.
+		api.POST("/public/orders", orderH.CreatePublic)
+
+		// PIN elevation (protected: requires a terminal session)
+		api.POST("/auth/elevate", authMW, elevationH.Elevate)
+
+		// Shared-terminal clock-in family — NOT a staff session: a terminal
+		// must be able to clock in before any staff session exists. The
+		// DeviceID middleware only captures the client-generated UUID for
+		// audit attribution; whether a device may use the family is decided
+		// per route by the `devices` approval table and per action by the
+		// staff PIN (roster/clock-in require an approved device, enable is
+		// how one becomes approved).
+		device := api.Group("")
+		device.Use(middleware.DeviceID())
+		{
+			device.GET("/staff/terminal-status", clockinH.TerminalStatus)
+			device.POST("/staff/terminal-enable", clockinH.TerminalEnable)
+			device.GET("/staff/roster", clockinH.Roster)
+			device.POST("/auth/clock-in", clockinH.ClockIn)
+			device.POST("/auth/clock-out", clockinH.ClockOut)
+		}
 
 	// Protected routes
 	protected := api.Group("")
@@ -129,11 +157,22 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.POST("/transactions/manual", txH.ManualPayment)
 		protected.PUT("/transactions/:id/email", txH.SendByEmail)
 
-		// Refunds
-		protected.GET("/refunds", refundH.List)
-		protected.POST("/refunds", refundH.Create)
-		protected.PUT("/refunds/:id/approve", middleware.RequireRole("Store Manager"), refundH.Approve)
-		protected.PUT("/refunds/:id/resolve", middleware.RequireRole("Store Manager"), refundH.Resolve)
+		// Refunds — manager/boss only end to end: filing a refund, listing
+		// them, and rescuing a request all require a Store Manager or
+		// Corporate Admin session (the role hierarchy admits the boss).
+		// Approve/Resolve additionally require PIN step-up plus separation of
+		// duties: the elevation token (a manager/boss PIN entered seconds ago)
+		// IS the authorization on top of the manager/boss session.
+		protected.GET("/refunds", middleware.RequireRole("Store Manager"), refundH.List)
+		protected.POST("/refunds", middleware.RequireRole("Store Manager"), refundH.Create)
+		protected.PUT("/refunds/:id/approve",
+			middleware.RequireRole("Store Manager"),
+			middleware.RequireElevation(elevationRepo, cfg.JWTSecret, "refund.approve"),
+			refundH.Approve)
+		protected.PUT("/refunds/:id/resolve",
+			middleware.RequireRole("Store Manager"),
+			middleware.RequireElevation(elevationRepo, cfg.JWTSecret, "refund.resolve"),
+			refundH.Resolve)
 
 		// Menu
 		protected.GET("/menu", menuH.ListItems)
@@ -162,6 +201,21 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/staff", middleware.RequireRole("Store Manager"), staffH.List)
 		protected.POST("/staff", middleware.RequireRole("Store Manager"), staffH.Create)
 		protected.PUT("/staff/:id", middleware.RequireRole("Store Manager"), staffH.Update)
+
+		// PIN management — boss-only set/reset with password re-auth
+		protected.GET("/staff/pin-holders", elevationH.ListPINHolders)
+		protected.GET("/staff/pin-accounts", middleware.RequireRole("Corporate Admin"), elevationH.ListUsers)
+		protected.PUT("/staff/:id/pin", middleware.RequireRole("Corporate Admin"), elevationH.SetPIN)
+
+		// Terminal (approved device) management — boss-only. Managers approve
+		// terminals with their PIN at the terminal itself; only the boss can
+		// revoke an approval.
+		protected.GET("/staff/devices", middleware.RequireRole("Corporate Admin"), clockinH.ListDevices)
+		protected.DELETE("/staff/devices/:id", middleware.RequireRole("Corporate Admin"), clockinH.DisableDevice)
+
+		// Server notifications (lockouts, high-risk approvals)
+		protected.GET("/notifications", elevationH.ListNotifications)
+		protected.PUT("/notifications/:id/read", elevationH.MarkNotificationRead)
 		protected.GET("/shifts", middleware.RequireRole("Store Manager"), staffH.ListShifts)
 		protected.POST("/shifts", middleware.RequireRole("Store Manager"), staffH.CreateShift)
 		protected.PUT("/shifts/:id", middleware.RequireRole("Store Manager"), staffH.UpdateShift)

@@ -7,10 +7,25 @@ import { AlertBanner } from '../components/ui/AlertBanner';
 import { Field, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import { recipeLines, recipeMeta } from '../data/ims';
+import api from '../api/client';
+
+const fromLine = (l) => ({
+  ingredient: l.ingredient || '',
+  qty: `${l.qty ?? ''}`,
+  unitCost: Number(l.unit_cost) || 0
+});
+
+const toLineReq = (l) => ({
+  ingredient: l.ingredient || '',
+  qty: Number(String(l.qty).replace(/[^\d.]/g, '')) || 0,
+  unit_cost: Number(l.unitCost) || 0
+});
 
 export function RecipeCosting() {
   const toast = useToast();
   const [lines, setLines] = useState(recipeLines);
+  const [meta, setMeta] = useState(recipeMeta);
+  const [recipeId, setRecipeId] = useState(null);
   const [saved, setSaved] = useState(false);
   const [dupOpen, setDupOpen] = useState(false);
   const [dupName, setDupName] = useState('');
@@ -19,7 +34,7 @@ export function RecipeCosting() {
 
   const plateCost = lines.reduce((s, l) => s + l.unitCost, 0);
   const margin = Math.round(
-    (recipeMeta.menuPrice - plateCost) / recipeMeta.menuPrice * 100
+    (meta.menuPrice - plateCost) / meta.menuPrice * 100
   );
   const thin = margin < 60;
 
@@ -32,6 +47,12 @@ export function RecipeCosting() {
 
   const handleSave = () => {
     setSaved(true);
+    const body = { name: meta.item, target_cost: meta.menuPrice, lines: lines.map(toLineReq) };
+    if (recipeId) {
+      api(`/recipes/${recipeId}`, { method: 'PUT', body }).catch(() => {});
+    } else {
+      api('/recipes', { method: 'POST', body }).catch(() => {});
+    }
     toast.success('Recipe saved');
     setTimeout(() => setSaved(false), 2000);
   };
@@ -52,6 +73,28 @@ export function RecipeCosting() {
     if (dupOpen && nameRef.current) nameRef.current.focus();
   }, [dupOpen]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/recipes');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) {
+          const recipe = data[0];
+          if (Array.isArray(recipe.lines) && recipe.lines.length > 0) {
+            setLines(recipe.lines.map(fromLine));
+          }
+          if (recipe.id) setRecipeId(recipe.id);
+          if (recipe.name) setMeta((prev) => ({ ...prev, item: recipe.name }));
+        }
+      } catch {
+        // keep static demo data as fallback
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const addIngredient = () => {
     const newLine = { ingredient: 'New ingredient', qty: '0 g', unitCost: 0 };
     setLines((prev) => [...prev, newLine]);
@@ -70,7 +113,7 @@ export function RecipeCosting() {
     <div className="mx-auto w-full max-w-[1400px]">
       <PageHeader
         title="Recipe & Costing"
-        descriptor={`${recipeMeta.item} · ${recipeMeta.yield}`}>
+        descriptor={`${meta.item} · ${meta.yield}`}>
 
         <Button variant="outline" onClick={openDuplicate}>Duplicate recipe</Button>
         <Button variant={saved ? 'green' : 'dark'} onClick={handleSave}>
@@ -155,7 +198,7 @@ export function RecipeCosting() {
           <div className="mt-4 flex items-center justify-between rounded-xl border border-line bg-canvas px-4 py-3">
             <div>
               <p className="text-xs text-meta">Menu price</p>
-              <p className="font-mono text-lg font-bold text-ink">Rs {recipeMeta.menuPrice}</p>
+              <p className="font-mono text-lg font-bold text-ink">Rs {meta.menuPrice}</p>
             </div>
             <Pill tone={thin ? 'amber' : 'green'} dot>
               {margin}% margin

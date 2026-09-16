@@ -13,6 +13,8 @@ import { CustomerStore } from '../components/CustomerStore';
 import { useToast } from '../components/ui/Toast';
 import { onlineOrders as initialOrders } from '../data/business';
 import { useOrders } from '../state/OrderContext';
+import { useCampaigns, DEMO_CAMPAIGN } from '../state/CampaignContext';
+import { useSettings } from '../state/SettingsContext';
 
 const tabs = ['Theme', 'Delivery zones', 'Payment methods', 'Order sync'];
 
@@ -35,14 +37,22 @@ const newOrderId = () => `ORD-${9000 + Math.floor(Math.random() * 900)}`;
 
 export function OnlineStore() {
   const [tab, setTab] = useState('Theme');
-  const [open, setOpen] = useState(true);
   const [orders, setOrders] = useState(initialOrders);
   const [selectedOrder, setSelectedOrder] = useState(null);
-  const [accent, setAccent] = useState(accentOptions[0]);
-  const [showPhotos, setShowPhotos] = useState(true);
-  const [showAllergens, setShowAllergens] = useState(false);
+  const { storefront, setStorefront } = useSettings();
   const { addTicket } = useOrders();
+  const { campaignList } = useCampaigns();
+  const liveCampaign = campaignList.find((c) => c.status === 'Scheduled') || DEMO_CAMPAIGN;
   const toast = useToast();
+
+  const open = storefront.open;
+  const setOpen = (v) => setStorefront({ open: v });
+  const accent = storefront.accent;
+  const setAccent = (c) => setStorefront({ accent: c });
+  const showPhotos = storefront.showPhotos;
+  const setShowPhotos = (v) => setStorefront({ showPhotos: v });
+  const showAllergens = storefront.showAllergens;
+  const setShowAllergens = (v) => setStorefront({ showAllergens: v });
 
   const currentSteps = selectedOrder?.type === 'delivery' ? deliverySteps : steps;
   const currentStepIndex = selectedOrder ? currentSteps.indexOf(selectedOrder.status) : 0;
@@ -118,7 +128,18 @@ export function OnlineStore() {
 
   return (
     <div className="mx-auto w-full max-w-[1400px]">
-      <PageHeader title="Online Store" descriptor="thamelhouse.order.np" />
+      <PageHeader
+        title="Online Store"
+        descriptor={
+          <a
+            href="/register/customer?device=desktop"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open the customer register storefront (desktop) in a new tab"
+            className="font-medium text-meta underline underline-offset-4 transition-colors duration-150 ease-soft hover:text-ink">
+            thamelhouse.order.np
+          </a>
+        } />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-3">
         <StatCard label="Online orders today" value="38" meta="Rs 42,180" />
@@ -336,7 +357,9 @@ export function OnlineStore() {
               storefrontOpen={open}
               showPhotos={showPhotos}
               showAllergens={showAllergens}
-              onOrderPlaced={handleCustomerOrder} />
+              onOrderPlaced={handleCustomerOrder}
+              campaign={liveCampaign}
+              containDialogs />
           </MobileFrame>
 
           <div className="mt-4 rounded-card border border-line bg-surface p-4">

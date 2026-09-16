@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, PageHeader, SectionHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { StatRow } from '../components/ui/StatCard';
@@ -8,6 +8,17 @@ import { Field, SearchInput, Toggle, inputClass } from '../components/ui/Control
 import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
 import { useToast } from '../components/ui/Toast';
 import { loyaltyTiers, pointsLedger, loyaltyGuests as initialGuests } from '../data/business';
+import api from '../api/client';
+
+const fromLedger = (e) => ({
+  guest: e.guest_name || 'Guest',
+  type: e.delta >= 0 ? 'Earned' : 'Redeemed',
+  detail: e.reason || '',
+  points: `${e.delta >= 0 ? '+' : ''}${e.delta.toLocaleString('en-IN')}`,
+  when: new Date(e.created_at).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric'
+  })
+});
 
 export function Loyalty() {
   const [issueOpen, setIssueOpen] = useState(false);
@@ -28,6 +39,38 @@ export function Loyalty() {
   const [thresholdBronze, setThresholdBronze] = useState('25,000');
   const [thresholdSilver, setThresholdSilver] = useState('75,000');
   const [thresholdGold, setThresholdGold] = useState('2,00,000');
+  const [ledger, setLedger] = useState(pointsLedger);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [gRes, lRes] = await Promise.all([api('/guests'), api('/loyalty/ledger')]);
+        if (cancelled) return;
+        const guestData = gRes?.data || [];
+        const ledEntries = lRes?.data || [];
+        if (ledEntries.length > 0) setLedger(ledEntries.map(fromLedger));
+        if (guestData.length > 0) {
+          const balances = {};
+          ledEntries.forEach((e) => {
+            balances[e.guest_id] = (balances[e.guest_id] || 0) + (e.delta || 0);
+          });
+          setGuests(
+            guestData.map((g) => ({
+              id: g.id,
+              name: g.name,
+              balance: balances[g.id] || 0,
+              tier: g.tier || 'New',
+              lastPurchase: g.avg_spend || 0
+            }))
+          );
+        }
+      } catch {
+        /* keep static demo arrays as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const filteredGuests = useMemo(() => {
     if (!search) return guests;
@@ -56,6 +99,25 @@ export function Loyalty() {
     setPointsInput('');
     setBasedOnPurchase(false);
     setReason('');
+    api('/loyalty/earn', {
+      method: 'POST',
+      body: {
+        guest_id: selectedGuest.id,
+        points: computedPoints,
+        reason: reason.trim() || 'Manual issue'
+      }
+    })
+      .then(() => setLedger((prev) => [
+        {
+          guest: selectedGuest.name,
+          type: 'Earned',
+          detail: reason.trim() || 'Manual issue',
+          points: `+${computedPoints.toLocaleString('en-IN')}`,
+          when: 'Just now'
+        },
+        ...prev
+      ]))
+      .catch(() => {});
   };
 
   const handleSaveSettings = () => {
@@ -124,7 +186,7 @@ export function Loyalty() {
             </tr>
           </thead>
           <tbody>
-            {pointsLedger.map((row, i) =>
+            {ledger.map((row, i) =>
             <Tr key={i}>
                 <Td className="font-semibold">{row.guest}</Td>
                 <Td>

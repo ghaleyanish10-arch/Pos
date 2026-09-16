@@ -16,7 +16,13 @@ func NewRefundRepo(db *pgxpool.Pool) *RefundRepo {
 }
 
 func (r *RefundRepo) List(ctx context.Context, status string) ([]model.Refund, error) {
-	query := `SELECT id, transaction_id, items, COALESCE(reason, ''), amount, status, locked_by::text, branch_id::text, created_at FROM refunds WHERE 1=1`
+	query := `SELECT r.id, r.transaction_id, r.items, COALESCE(r.reason, ''), r.amount, r.status,
+	                  r.locked_by::text, r.branch_id::text, r.created_at, COALESCE(ft.name, ''), COALESCE(r.created_by::text, '')
+	         FROM refunds r
+	         LEFT JOIN transactions t ON t.id = r.transaction_id
+	         LEFT JOIN orders o ON o.id = t.order_id
+	         LEFT JOIN floor_tables ft ON ft.id = o.table_id
+	         WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1
 
@@ -37,7 +43,7 @@ func (r *RefundRepo) List(ctx context.Context, status string) ([]model.Refund, e
 	var refunds []model.Refund
 	for rows.Next() {
 		var rf model.Refund
-		if err := rows.Scan(&rf.ID, &rf.TransactionID, &rf.Items, &rf.Reason, &rf.Amount, &rf.Status, &rf.LockedBy, &rf.BranchID, &rf.CreatedAt); err != nil {
+		if err := rows.Scan(&rf.ID, &rf.TransactionID, &rf.Items, &rf.Reason, &rf.Amount, &rf.Status, &rf.LockedBy, &rf.BranchID, &rf.CreatedAt, &rf.TableName, &rf.CreatedBy); err != nil {
 			return nil, err
 		}
 		refunds = append(refunds, rf)
@@ -47,10 +53,20 @@ func (r *RefundRepo) List(ctx context.Context, status string) ([]model.Refund, e
 
 func (r *RefundRepo) Create(ctx context.Context, rf *model.Refund) error {
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO refunds (transaction_id, items, reason, amount, status, branch_id) VALUES ($1, $2, $3, $4, 'Requested', NULLIF($5,'')::uuid) RETURNING id, created_at`,
-		rf.TransactionID, rf.Items, rf.Reason, rf.Amount, rf.BranchID,
+		`INSERT INTO refunds (transaction_id, items, reason, amount, status, branch_id, created_by) VALUES ($1, $2, $3, $4, 'Requested', NULLIF($5,'')::uuid, NULLIF($6,'')::uuid) RETURNING id, created_at`,
+		rf.TransactionID, rf.Items, rf.Reason, rf.Amount, rf.BranchID, rf.CreatedBy,
 	).Scan(&rf.ID, &rf.CreatedAt)
 	return err
+}
+
+// GetCreator returns the user that filed the refund — the separation-of-duties
+// anchor for approval. pgx.ErrNoRows when the refund does not exist.
+func (r *RefundRepo) GetCreator(ctx context.Context, id string) (string, error) {
+	var createdBy string
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(created_by::text, '') FROM refunds WHERE id = $1`, id,
+	).Scan(&createdBy)
+	return createdBy, err
 }
 
 func (r *RefundRepo) UpdateStatus(ctx context.Context, id, status string) error {

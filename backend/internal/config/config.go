@@ -15,6 +15,9 @@ type Config struct {
 	JWTRefreshExpiry time.Duration
 	CORSOrigin      string
 
+	// ShiftTTL is the lifetime of a clock-in session token (one shift).
+	ShiftTTL time.Duration
+
 	// SMTP — when unset, email endpoints return a clear 503 instead of pretending to send.
 	SMTPHost     string
 	SMTPPort     string
@@ -39,6 +42,7 @@ func Load() *Config {
 		JWTAccessExpiry: parseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m")),
 		JWTRefreshExpiry: parseDuration(getEnv("JWT_REFRESH_EXPIRY", "168h")),
 		CORSOrigin:      getEnv("CORS_ORIGIN", "http://localhost:5173"),
+		ShiftTTL:        parseDuration(getEnv("SHIFT_TTL", "12h")),
 
 		SMTPHost:     getEnv("SMTP_HOST", ""),
 		SMTPPort:     getEnv("SMTP_PORT", "587"),

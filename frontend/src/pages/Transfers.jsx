@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowRightIcon, TruckIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Board, BoardCard, Column, InfoLine } from '../components/ui/Kanban';
@@ -14,6 +14,7 @@ import {
   branches,
   inventoryItems } from
 '../data/ims';
+import api from '../api/client';
 
 function Route({ transfer }) {
   return (
@@ -42,6 +43,34 @@ export function Transfers() {
   const [receiveDrawer, setReceiveDrawer] = useState(null);
   const [receiveLines, setReceiveLines] = useState([]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/transfers');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) {
+          const fromApi = (g) => ({
+            id: g.id,
+            item: g.item || '',
+            qty: `${g.qty} pcs`,
+            from: g.from_branch_id || '',
+            to: g.to_branch_id || '',
+            age: (() => { const m = Math.floor((Date.now() - new Date(g.created_at).getTime()) / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr`; })(),
+            eta: g.eta ? (() => { const m = Math.floor((new Date(g.eta).getTime() - Date.now()) / 60000); return m > 0 ? `${m} min` : 'Now'; })() : undefined,
+          });
+          setRequested(data.filter((g) => g.status === 'Requested').map(fromApi));
+          setInTransit(data.filter((g) => g.status !== 'Requested' && g.status !== 'Received').map(fromApi));
+          setReceived(data.filter((g) => g.status === 'Received').map(fromApi));
+        }
+      } catch {
+        /* keep static transfers as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const filteredItems = inventoryItems.filter((item) =>
     item.toLowerCase().includes(itemSearch.toLowerCase())
   );
@@ -60,6 +89,7 @@ export function Transfers() {
     setNewQty('');
     setNewDate('2026-09-14');
     toast.success('Transfer sent · In transit');
+    api('/transfers', { method: 'POST', body: { item: newItem, qty: parseFloat(newQty), from_branch_id: newSource, to_branch_id: newDest } }).catch(() => {});
   };
 
   const openReceiveDrawer = (transfer) => {
@@ -83,6 +113,7 @@ export function Transfers() {
     setReceiveDrawer(null);
     setCounting(null);
     toast.success('Transfer received');
+    api(`/transfers/${receiveDrawer.id}/receive`, { method: 'PUT' }).catch(() => {});
   };
 
   const dispatchTransfer = (id) => {

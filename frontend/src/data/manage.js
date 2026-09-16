@@ -58,7 +58,7 @@ export const guestTimeline = [
 
 
 export const staff = [
-{ name: 'Riya Sharma', role: 'Service', id: 'MST-101', email: 'riya@mesa.os', phone: '9800000101', joined: 'Mar 2024', station: 'Main floor' },
+{ name: 'Riya Sharma', role: 'Waiter', id: 'MST-101', email: 'riya@mesa.os', phone: '9800000101', joined: 'Mar 2024', station: 'Main floor' },
 { name: 'Kiran Lama', role: 'Kitchen', id: 'MST-102', email: 'kiran@mesa.os', phone: '9800000102', joined: 'Jul 2023', station: 'Kitchen line' },
 { name: 'Sunita K.C.', role: 'Kitchen', id: 'MST-103', email: 'sunita@mesa.os', phone: '9800000103', joined: 'Jan 2025', station: 'Pantry' },
 { name: 'Prakash Adhikari', role: 'Bar', id: 'MST-104', email: 'prakash@mesa.os', phone: '9800000104', joined: 'Nov 2022', station: 'Bar counter' },
@@ -68,10 +68,10 @@ export const staff = [
 export const weekDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export const shifts = [
-{ staff: 'Riya Sharma', role: 'Service', day: 0, time: '10–18' },
-{ staff: 'Riya Sharma', role: 'Service', day: 1, time: '10–18' },
-{ staff: 'Riya Sharma', role: 'Service', day: 3, time: '14–22' },
-{ staff: 'Riya Sharma', role: 'Service', day: 5, time: '14–22' },
+{ staff: 'Riya Sharma', role: 'Waiter', day: 0, time: '10–18' },
+{ staff: 'Riya Sharma', role: 'Waiter', day: 1, time: '10–18' },
+{ staff: 'Riya Sharma', role: 'Waiter', day: 3, time: '14–22' },
+{ staff: 'Riya Sharma', role: 'Waiter', day: 5, time: '14–22' },
 { staff: 'Kiran Lama', role: 'Kitchen', day: 0, time: '09–17' },
 { staff: 'Kiran Lama', role: 'Kitchen', day: 2, time: '09–17' },
 { staff: 'Kiran Lama', role: 'Kitchen', day: 3, time: '09–17' },
@@ -121,3 +121,16 @@ export const laborBudget = { hours: 160, cost: 'Rs 128,000' };
 export const bookingTimeSlots = ['12:00', '12:30', '13:00', '13:30', '14:00', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00'];
 
 export const bookingSections = ['Indoor', 'Terrace', 'Bar area', 'Private room'];
+
+export const bookingTableSections = {
+  Indoor: ['T2 · 2p', 'T5 · 4p'],
+  'Bar area': ['T12 · 6p'],
+  Terrace: ['Terrace · 8p']
+};
+
+export const sectionTone = {
+  Indoor: 'blue',
+  Terrace: 'green',
+  'Bar area': 'amber',
+  'Private room': 'purple'
+};

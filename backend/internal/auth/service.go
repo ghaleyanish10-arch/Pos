@@ -90,3 +90,36 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, newPassword string
 	)
 	return err
 }
+
+// VerifyPassword re-authenticates a user by login password. Used by the PIN
+// reset flow: the resetter must prove their own identity with their password,
+// not just their (possibly stolen) session token. Never reveals or returns
+// any secret.
+func (s *Service) VerifyPassword(ctx context.Context, userID, password string) error {
+	var hash string
+	err := s.db.QueryRow(ctx,
+		`SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	).Scan(&hash)
+	if err != nil {
+		return fmt.Errorf("invalid credentials")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return fmt.Errorf("invalid credentials")
+	}
+	return nil
+}
+
+// SetPIN stores a fresh bcrypt PIN hash for the user and clears lockout
+// state. The caller must have validated the PIN and authorized the reset.
+func (s *Service) SetPIN(ctx context.Context, userID, pin string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(pin), 12)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx,
+		`UPDATE users SET pin_hash = $2, pin_failed_attempts = 0, pin_locked_until = NULL WHERE id = $1`,
+		userID, string(hash),
+	)
+	return err
+}

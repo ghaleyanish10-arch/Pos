@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SearchIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -8,15 +8,12 @@ import { DetailDrawer, DetailRow, DetailSection } from '../components/ui/DetailD
 import { Field, Toggle, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import {
-  bookingSlots,
-  bookingTables,
-  reservations as reservationsData,
   waitlist as waitlistData,
   guests,
   guestTimeline,
-  bookingTimeSlots,
   bookingSections } from
 '../data/manage';
+import { useTables } from '../state/TableContext';
 
 const statusTone = {
   Confirmed: 'blue',
@@ -33,6 +30,8 @@ const tierTone = {
   Regular: 'blue',
   New: 'green'
 };
+
+
 
 function profileFor(name) {
   const found = guests.find((g) => g.name === name) ||
@@ -172,28 +171,30 @@ function getTimePeriod(timeStr) {
   return 'night';
 }
 
+// Reservations key on the table's internal name (T2, T5…) so edits to display
+// names or seat counts never orphan an existing booking.
 export const defaultReservations = [
   // Morning
-  { guest: 'Bikash Rai', covers: 2, table: 'T2 · 2p', time: '09:00', duration: 1, status: 'Confirmed' },
-  { guest: 'Breakfast Club', covers: 4, table: 'T5 · 4p', time: '10:00', duration: 1.5, status: 'Confirmed' },
+  { guest: 'Bikash Rai', covers: 2, table: 'T2', time: '09:00', duration: 1, status: 'Confirmed' },
+  { guest: 'Breakfast Club', covers: 4, table: 'T5', time: '10:00', duration: 1.5, status: 'Confirmed' },
 
   // Afternoon
-  { guest: 'Elina Gurung', covers: 4, table: 'T5 · 4p', time: '12:30', duration: 1.5, status: 'Confirmed' },
-  { guest: 'Thamel Tech Lunch', covers: 6, table: 'T12 · 6p', time: '13:00', duration: 2, status: 'Confirmed' },
+  { guest: 'Elina Gurung', covers: 4, table: 'T5', time: '12:30', duration: 1.5, status: 'Confirmed' },
+  { guest: 'Thamel Tech Lunch', covers: 6, table: 'T12', time: '13:00', duration: 2, status: 'Confirmed' },
 
   // Evening
-  { guest: 'Deepak Thapa', covers: 4, table: 'T5 · 4p', time: '17:00', duration: 2, status: 'Seated' },
-  { guest: 'Anisha Shrestha', covers: 2, table: 'T2 · 2p', time: '18:00', duration: 1, status: 'Confirmed' },
-  { guest: 'Corporate — Yeti Air', covers: 8, table: 'Terrace · 8p', time: '18:00', duration: 3, status: 'Confirmed' },
-  { guest: 'Gurung family', covers: 6, table: 'T12 · 6p', time: '19:00', duration: 2, status: 'Confirmed' },
-  { guest: 'Walk-in hold', covers: 2, table: 'T2 · 2p', time: '20:00', duration: 1, status: 'No-show' },
-  { guest: 'Chloe Martin', covers: 2, table: 'T5 · 4p', time: '21:00', duration: 1, status: 'Confirmed' },
+  { guest: 'Deepak Thapa', covers: 4, table: 'T5', time: '17:00', duration: 2, status: 'Seated' },
+  { guest: 'Anisha Shrestha', covers: 2, table: 'T2', time: '18:00', duration: 1, status: 'Confirmed' },
+  { guest: 'Corporate — Yeti Air', covers: 8, table: 'T11', time: '18:00', duration: 3, status: 'Confirmed' },
+  { guest: 'Gurung family', covers: 6, table: 'T12', time: '19:00', duration: 2, status: 'Confirmed' },
+  { guest: 'Walk-in hold', covers: 2, table: 'T2', time: '20:00', duration: 1, status: 'No-show' },
+  { guest: 'Chloe Martin', covers: 2, table: 'T5', time: '21:00', duration: 1, status: 'Confirmed' },
 
   // Night
-  { guest: 'Late Night Lounge', covers: 6, table: 'Terrace · 8p', time: '22:00', duration: 2, status: 'Confirmed' }
+  { guest: 'Late Night Lounge', covers: 6, table: 'T11', time: '22:00', duration: 2, status: 'Confirmed' }
 ];
 
-const RESERVATIONS_KEY = 'mesa_reservations';
+const RESERVATIONS_KEY = 'mesa_reservations_v2';
 
 function timeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -272,12 +273,19 @@ function readStoredReservations() {
     if (!raw) return defaultReservations;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
+      // Migrate legacy labels ('T2 · 2p', 'Terrace · 8p') to internal names.
+      const migrated = parsed.map((r) => ({
+        ...normalizeReservation(r),
+        table: typeof r.table === 'string'
+          ? (r.table === 'Terrace · 8p' ? 'T11' : r.table.replace(/ · \d+p$/, ''))
+          : r.table
+      }));
       // Merge with defaultReservations to ensure morning/afternoon/night entries exist
-      const existingKeys = new Set(parsed.map((r) => `${r.table}|${r.time || r.start}`));
+      const existingKeys = new Set(migrated.map((r) => `${r.table}|${r.time || r.start}`));
       const missingDefaults = defaultReservations.filter(
         (d) => !existingKeys.has(`${d.table}|${d.time}`)
       );
-      return [...parsed.map(normalizeReservation), ...missingDefaults];
+      return [...migrated, ...missingDefaults];
     }
     return defaultReservations;
   } catch {
@@ -287,11 +295,25 @@ function readStoredReservations() {
 
 export function Bookings() {
   const toast = useToast();
+  const { tables: floorTables, rooms: liveRooms } = useTables();
+
+  // Bookable tables come from the shared floor plan (TableContext) so table
+  // edits made by the boss/manager in Front of House apply here instantly.
+  const bookableTables = useMemo(() => floorTables.map((t) => t.name), [floorTables]);
+  const tableRoom = useMemo(
+    () => Object.fromEntries(floorTables.map((t) => [t.name, t.room])),
+    [floorTables]
+  );
+  const seatLabel = useMemo(
+    () => Object.fromEntries(floorTables.map((t) => [t.name, `${t.name} · ${t.seats}p`])),
+    [floorTables]
+  );
 
   const [reservationList, setReservationList] = useState(readStoredReservations);
   const [waitlistState, setWaitlistState] = useState(waitlistData);
   const [selectedPeriod, setSelectedPeriod] = useState('evening');
   const [drawerPeriod, setDrawerPeriod] = useState('all');
+  const [roomFilter, setRoomFilter] = useState('all');
 
   const [bookingOpen, setBookingOpen] = useState(false);
   const [guestQuery, setGuestQuery] = useState('');
@@ -301,7 +323,7 @@ export function Bookings() {
   const [duration, setDuration] = useState(1);
   const [bookingDate, setBookingDate] = useState('2026-09-10');
   const [bookingTime, setBookingTime] = useState(null);
-  const [bookingTable, setBookingTable] = useState(bookingTables[0]);
+  const [bookingTable, setBookingTable] = useState(bookableTables[0]);
   const [specialRequests, setSpecialRequests] = useState('');
   const [depositRequired, setDepositRequired] = useState(false);
   const [profile, setProfile] = useState(null);
@@ -339,8 +361,15 @@ export function Bookings() {
     ? ALL_BOOKING_TIME_SLOTS
     : ALL_BOOKING_TIME_SLOTS.filter((t) => getTimePeriod(t) === drawerPeriod);
 
+  const roomChips = liveRooms
+    .map((room) => ({ room, count: bookableTables.filter((tbl) => tableRoom[tbl] === room).length }))
+    .filter((g) => g.count > 0);
+  const displayTables = roomFilter === 'all'
+    ? bookableTables
+    : bookableTables.filter((tbl) => tableRoom[tbl] === roomFilter);
+
   function openNewBooking(table = null, time = null) {
-    const selectedTbl = table || bookingTables[0];
+    const selectedTbl = table || bookableTables[0];
     setGuestQuery('');
     setAddInline(false);
     setGuestName('');
@@ -389,7 +418,7 @@ export function Bookings() {
 
   function handleCreateBooking() {
     const name = addInline ? guestName.trim() : (guestSearchResults[0]?.name || 'Guest');
-    const selectedTable = bookingTable || bookingTables[0];
+    const selectedTable = bookingTable || bookableTables[0];
 
     if (!bookingTime) {
       toast('Please select an available booking time', { tone: 'red' });
@@ -480,11 +509,44 @@ export function Bookings() {
           })}
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={roomFilter === 'all'}
+            onClick={() => setRoomFilter('all')}
+            className={`h-8 rounded-full border px-3.5 text-[13px] font-semibold transition-colors duration-150 ease-soft ${
+              roomFilter === 'all' ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-meta hover:text-ink'
+            }`}>
+            All rooms
+          </button>
+          {roomChips.map(({ room, count }) => (
+            <button
+              key={room}
+              type="button"
+              aria-pressed={roomFilter === room}
+              onClick={() => setRoomFilter(roomFilter === room ? 'all' : room)}
+              className={`flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-[13px] font-semibold transition-colors duration-150 ease-soft ${
+                roomFilter === room ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-meta hover:text-ink'
+              }`}>
+              {room}
+              <span className={`font-mono text-[10px] ${roomFilter === room ? 'text-white/70' : 'text-meta/70'}`}>
+                {count}
+              </span>
+            </button>
+          ))}
+        </div>
+
         <Button variant="dark" onClick={() => openNewBooking()}>New booking</Button>
       </PageHeader>
 
       <div className="scroll-thin overflow-x-auto rounded-card border border-line bg-surface p-4">
-        <div className="min-w-[760px]">
+        <div style={{ minWidth: Math.max(760, displayTables.length * 118) }}>
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              {roomFilter === 'all' ? `All rooms · ${displayTables.length} tables` : `${roomFilter} · ${displayTables.length} tables`}
+            </span>
+            <span className="text-[11px] text-meta">Tap a free slot to book that table</span>
+          </div>
           <div className="flex">
             <div className="w-[72px] shrink-0">
               <div className="pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
@@ -506,7 +568,7 @@ export function Bookings() {
               </div>
             </div>
 
-            {bookingTables.map((table) => {
+            {displayTables.map((table) => {
               const tableRes = reservationList.filter((r) => {
                 if (r.table !== table || r.status === 'Cancelled') return false;
                 const range = getReservationRange(r);
@@ -517,7 +579,7 @@ export function Bookings() {
               return (
                 <div key={table} className="min-w-0 flex-1 px-2">
                   <div className="pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
-                    {table}
+                    {seatLabel[table] || table}
                   </div>
                   <div className="relative" style={{ height: activePeriod.slots.length * UNIT_H }}>
                     {activePeriod.slots.map((slot, i) =>
@@ -743,7 +805,8 @@ export function Bookings() {
 
             <Field label="Table / section">
               <div className="flex flex-wrap gap-2">
-                {[...bookingTables, ...bookingSections].map((t) => {
+                {[...bookableTables, ...bookingSections].map((t) => {
+                  const chipLabel = bookingSections.includes(t) ? t : seatLabel[t] || t;
                   const isSelected = bookingTable === t;
                   const isBookedAtTime = bookingTime
                     ? isTimeBookedForTable(t, bookingTime, bookingDate, reservationList, duration)
@@ -761,7 +824,7 @@ export function Bookings() {
                           ? 'border-line/60 bg-surface/50 text-meta/60 hover:text-ink'
                           : 'border-line bg-surface text-meta hover:border-ink/30 hover:text-ink'
                       }`}>
-                      {t}
+                      {chipLabel}
                       {isBookedAtTime && !isSelected && (
                         <span className="ml-1 text-[10px] font-normal text-status-amber">
                           busy

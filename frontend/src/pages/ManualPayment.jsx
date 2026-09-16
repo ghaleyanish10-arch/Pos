@@ -13,6 +13,8 @@ import { Button } from '../components/ui/Button';
 import { Pill } from '../components/ui/Pill';
 import { useToast } from '../components/ui/Toast';
 import { useSettings } from '../state/SettingsContext';
+import { printReceiptHtml } from '../utils/printReceipt';
+import api from '../api/client';
 
 const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'];
 const quickAmounts = ['500', '1000', '2000', '5000'];
@@ -30,6 +32,40 @@ export function ManualPayment() {
   const [amount, setAmount] = useState('2480');
   const [method, setMethod] = useState('Cash');
   const [confirmed, setConfirmed] = useState(false);
+  // The payment is recorded server-side on confirm; these fields carry the
+  // outcome onto the receipt card (real txn id, or offline notice).
+  const [record, setRecord] = useState(null); // { id, offline }
+  const [paidAt, setPaidAt] = useState('');
+
+  const confirmPayment = async () => {
+    const value = Number(amount || 0);
+    if (!value || value <= 0) {
+      toast.error('Enter an amount greater than zero');
+      return;
+    }
+    const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    setPaidAt(now);
+    setConfirmed(true);
+    try {
+      const tx = await api('/transactions/manual', {
+        method: 'POST',
+        body: { amount: value, method: method.toLowerCase() }
+      });
+      setRecord({ id: tx?.id || null, offline: false });
+      toast.success(`Rs ${display} payment recorded in Transactions`);
+    } catch {
+      // API offline — keep the local receipt but be honest that nothing was recorded.
+      setRecord({ id: null, offline: true });
+      toast.error('Payment completed, but the server is unreachable — it was not recorded in Transactions', { tone: 'red' });
+    }
+  };
+
+  const resetPayment = () => {
+    setConfirmed(false);
+    setAmount('2480');
+    setMethod('Cash');
+    setRecord(null);
+  };
 
   const press = (k) => {
     setConfirmed(false);
@@ -38,6 +74,45 @@ export function ManualPayment() {
   };
 
   const display = Number(amount || 0).toLocaleString('en-IN');
+
+  const printReceipt = () => {
+    const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    // Manual payments are amount+method only (no itemized order), so the
+    // item lines below are the demo set; the footer does carry the real
+    // recorded transaction id when the server confirmed the payment.
+    const items = [
+      ['2× Momo Jhol', 'Rs 780'],
+      ['1× Chicken Chilli', 'Rs 420'],
+      ['1× Thakali Set', 'Rs 995']
+    ];
+    const ok = printReceiptHtml({
+      title: settings.businessName,
+      subtitle: `${settings.city} · VAT ${settings.vatNo}`,
+      subline: 'Table 12 · Register 1',
+      meta: now,
+      items,
+      ledger: [
+        ['Subtotal', 'Rs 2,195'],
+        ['Service charge 10%', 'Rs 220'],
+        ['VAT 13%', 'Rs 65']
+      ],
+      total: `Rs ${display}`,
+      paidBy: method,
+      paidAt: now,
+      footerLines: [
+        record && !record.offline && record.id
+          ? `Receipt ${String(record.id).slice(0, 8).toUpperCase()} · Recorded in Transactions`
+          : 'Receipt #1042 · Fiscal ID IRD-2026-08842',
+        'Nepal Revenue certified'
+      ],
+      thanks: 'Thank you, visit again'
+    });
+    if (ok) {
+      toast.success('Receipt printed');
+    } else {
+      toast.error('Enable pop-ups to print this receipt');
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1400px]">
@@ -145,7 +220,7 @@ export function ManualPayment() {
             <Button variant="outline" onClick={() => setAmount('0')}>
               Cancel
             </Button>
-            <Button variant="green" full onClick={() => setConfirmed(true)}>
+            <Button variant="green" full onClick={confirmPayment}>
               Confirm Rs {display} · {method}
             </Button>
           </div>
@@ -165,7 +240,7 @@ export function ManualPayment() {
                   <Pill tone="green" dot>
                     Paid
                   </Pill>
-                  <span className="font-mono text-xs text-meta">14:52</span>
+                  <span className="font-mono text-xs text-meta">{paidAt}</span>
                 </div>
                 <div className="mt-4 border-b border-dashed border-line pb-4 text-center">
                   <p className="text-sm font-bold uppercase tracking-[0.12em] text-ink">
@@ -191,15 +266,36 @@ export function ManualPayment() {
                   <span className="text-sm font-bold">Paid by {method}</span>
                   <span className="font-mono text-lg font-extrabold">Rs {display}</span>
                 </div>
+                {record && (
+                  <div className={`mb-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                  record.offline ?
+                  'border-status-amber/40 bg-tint-amber text-status-amber' :
+                  'border-status-green/40 bg-tint-green text-status-green'}`}>
+
+                    {record.offline ?
+                    'Not recorded — server unreachable' :
+                    <>
+                      <CheckIcon className="h-4 w-4 shrink-0" />
+                      <span className="truncate">
+                        Recorded in Transactions · {String(record.id).slice(0, 8).toUpperCase()}
+                      </span>
+                    </>
+                    }
+                  </div>
+                )}
                 <div className="flex items-center gap-2 rounded-xl bg-tint-green px-3 py-2 text-xs font-semibold text-status-green">
                   <CheckIcon className="h-4 w-4" />
                   Fiscal ID IRD-2026-08842 certified
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setConfirmed(false)}>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    setConfirmed(false);
+                    setRecord(null);
+                    if (record && !record.offline) toast('Recorded payments can be refunded from Refunds');
+                  }}>
                     Void
                   </Button>
-                  <Button size="sm" variant="dark" full onClick={() => toast.success('Receipt printed')}>
+                  <Button size="sm" variant="dark" full onClick={printReceipt}>
                     Print receipt
                   </Button>
                 </div>
@@ -209,7 +305,7 @@ export function ManualPayment() {
                   </Button>
                 </div>
                 <div className="mt-2">
-                  <Button size="sm" variant="green" full onClick={() => { setConfirmed(false); setAmount('2480'); setMethod('Cash'); }}>
+                  <Button size="sm" variant="green" full onClick={resetPayment}>
                     Done
                   </Button>
                 </div>

@@ -23,6 +23,7 @@ services:
       DATABASE_URL: postgres://postgres:postgres@db:5432/mesa_os?sslmode=disable
       JWT_SECRET: local-dev-secret-change-me
       JWT_ACCESS_TTL: 24h
+      SHIFT_TTL: 12h
       CORS_ORIGIN: http://localhost:5173
     depends_on:
       db:

@@ -8,6 +8,7 @@ import { TableProvider } from './state/TableContext';
 import { MenuProvider } from './state/MenuContext';
 import { CampaignProvider } from './state/CampaignContext';
 import { NotificationProvider } from './state/Notifications';
+import { ElevationProvider } from './state/ElevationContext';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { Home } from './pages/Home';
 import { Register } from './pages/Register';
@@ -52,6 +53,7 @@ export function App() {
       <SettingsProvider>
       <ToastProvider>
         <NotificationProvider>
+        <ElevationProvider>
         <OrderProvider>
         <TableProvider>
         <MenuProvider>
@@ -61,7 +63,6 @@ export function App() {
           <Route element={<AppShell />}>
             <Route path="/" element={<Home />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/register/customer" element={<RegisterCustomer />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
@@ -95,12 +96,17 @@ export function App() {
             <Route path="/system-health" element={<SystemHealth />} />
             <Route path="*" element={<NotFound />} />
           </Route>
+          {/* The customer register is public and standalone: a customer (QR
+              scan / storefront link) must get the register only — no staff
+              session, no side bar, no POS features. */}
+          <Route path="/register/customer" element={<RegisterCustomer />} />
         </Routes>
       </BrowserRouter>
     </CampaignProvider>
     </MenuProvider>
     </TableProvider>
     </OrderProvider>
+    </ElevationProvider>
     </NotificationProvider>
     </ToastProvider>
     </SettingsProvider>

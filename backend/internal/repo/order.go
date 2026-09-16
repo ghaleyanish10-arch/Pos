@@ -89,6 +89,16 @@ func (r *OrderRepo) ResolveTableID(ctx context.Context, table string) (string, e
 	return id, err
 }
 
+// ResolveTable maps a table name (e.g. "T4") to its id and branch so a public
+// (customer) order can attach to the right table and branch without a session.
+func (r *OrderRepo) ResolveTable(ctx context.Context, name string) (string, string, error) {
+	var id, branch string
+	err := r.db.QueryRow(ctx,
+		`SELECT id::text, COALESCE(branch_id::text, '') FROM floor_tables WHERE name = $1`, name,
+	).Scan(&id, &branch)
+	return id, branch, err
+}
+
 func (r *OrderRepo) Create(ctx context.Context, o *model.Order, items []model.CreateOrderItemReq) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -123,11 +133,20 @@ func (r *OrderRepo) Create(ctx context.Context, o *model.Order, items []model.Cr
 	o.Total = total
 
 	// Every order creates a KDS ticket so it shows up on the kitchen display.
+	// Dine-in tickets are named after their table so the staff Orders board and
+	// KDS read "Table T4" rather than a generic label — a QR-scanned order is
+	// stored with the floor-table id, so join for the display name.
 	tag := "Dine-in"
 	if o.Type == "takeaway" {
 		tag = "Takeaway"
 	} else if o.Type == "delivery" {
 		tag = "Delivery"
+	} else if o.TableID != nil && *o.TableID != "" {
+		var tableName string
+		_ = tx.QueryRow(ctx, `SELECT name FROM floor_tables WHERE id = NULLIF($1,'')::uuid`, *o.TableID).Scan(&tableName)
+		if tableName != "" {
+			tag = "Table " + tableName
+		}
 	}
 	_, err = tx.Exec(ctx,
 		`INSERT INTO kds_tickets (order_id, tag, station, status, ai_phone, allergy, fired) VALUES ($1, $2, 'Kitchen', 'incoming', false, '', false)`,

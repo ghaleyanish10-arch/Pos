@@ -5,16 +5,26 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/mesa-os/backend/internal/model"
 	"github.com/mesa-os/backend/internal/repo"
 )
 
 type RefundHandler struct {
-	repo *repo.RefundRepo
+	repo      *repo.RefundRepo
+	elevRepo  *repo.ElevationRepo
+	auditRepo *repo.AuditRepo
 }
 
 func NewRefundHandler(r *repo.RefundRepo) *RefundHandler {
 	return &RefundHandler{repo: r}
+}
+
+// SetElevationDeps attaches the repos needed for separation-of-duties checks
+// and approval auditing (nil-safe: demo routers may omit them).
+func (h *RefundHandler) SetElevationDeps(elev *repo.ElevationRepo, audit *repo.AuditRepo) {
+	h.elevRepo = elev
+	h.auditRepo = audit
 }
 
 func (h *RefundHandler) List(c *gin.Context) {
@@ -36,6 +46,7 @@ func (h *RefundHandler) Create(c *gin.Context) {
 	}
 
 	branchID, _ := c.Get("branch_id")
+	userID, _ := c.Get("user_id")
 	items, _ := json.Marshal(req.Items)
 
 	rf := &model.Refund{
@@ -44,6 +55,7 @@ func (h *RefundHandler) Create(c *gin.Context) {
 		Reason:        req.Reason,
 		Amount:        req.Amount,
 		BranchID:      strPtr(branchID.(string)),
+		CreatedBy:     userID.(string),
 	}
 
 	if err := h.repo.Create(c.Request.Context(), rf); err != nil {
@@ -54,16 +66,81 @@ func (h *RefundHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, rf)
 }
 
+// Approve elevates a refund from Requested to Approved. It requires a valid,
+// unconsumed elevation token (RequireElevation middleware, action
+// refund.approve) and enforces separation of duties: the person PERFORMING the
+// approval (the session user, who borrowed the PIN holder's authority) must
+// not be the person who created the refund. Comparing against the PIN holder
+// would be wrong — the manager who filed the refund must not approve it even
+// with the boss's PIN in hand.
 func (h *RefundHandler) Approve(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	if err := h.repo.Lock(c.Request.Context(), c.Param("id"), userID.(string)); err != nil {
+	elevatedBy, _ := c.Get("elevated_by")
+	refundID := c.Param("id")
+
+	// Separation of duties: the acting session user must differ from the
+	// refund's creator.
+	if h.elevRepo != nil && elevatedBy != nil {
+		creator, err := h.repo.GetCreator(c.Request.Context(), refundID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"error": "refund not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "refund lookup failed"})
+			return
+		}
+		if creator != "" && creator == userID.(string) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "separation of duties: the refund creator cannot approve their own refund",
+				"code":  "SELF_APPROVAL_BLOCKED",
+			})
+			return
+		}
+	}
+
+	if err := h.repo.Lock(c.Request.Context(), refundID, elevatedByString(elevatedBy, userID)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.repo.UpdateStatus(c.Request.Context(), c.Param("id"), "Approved"); err != nil {
+	if err := h.repo.UpdateStatus(c.Request.Context(), refundID, "Approved"); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Refund approval is a high-risk approved action: audit unconditionally and
+	// notify managers through the server notifications table.
+	if h.auditRepo != nil {
+		branchID, _ := c.Get("branch_id")
+		after, _ := json.Marshal(map[string]any{
+			"refund_id":   refundID,
+			"elevated_by": elevatedBy,
+		})
+		event := &model.AuditEvent{
+			ActorID:   strPtr(userID.(string)),
+			ActorName: c.GetString("email"),
+			ActorRole: c.GetString("role"),
+			EventType: "refund.approved",
+			Summary:   "refund approved with PIN elevation",
+			AfterJSON: after,
+			BranchID:  strPtr(branchID.(string)),
+		}
+		if err := h.auditRepo.Create(c.Request.Context(), event); err != nil {
+			ginLog("refund approval audit failed: " + err.Error())
+		}
+	}
+	if h.elevRepo != nil {
+		branchID, _ := c.Get("branch_id")
+		payload, _ := json.Marshal(map[string]any{
+			"refund_id":   refundID,
+			"elevated_by": elevatedBy,
+			"kind":        "refund.approval",
+		})
+		if err := h.elevRepo.CreateNotification(c.Request.Context(), "Store Manager", branchID.(string), "refund.approval", payload); err != nil {
+			ginLog("refund approval notification failed: " + err.Error())
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "refund approved"})
 }
 
@@ -73,4 +150,22 @@ func (h *RefundHandler) Resolve(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "refund resolved"})
+}
+
+func elevatedString(v any) string {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return ""
+	}
+	return s
+}
+
+func elevatedByString(elevatedBy, fallback any) string {
+	if s := elevatedString(elevatedBy); s != "" {
+		return s
+	}
+	if s, ok := fallback.(string); ok {
+		return s
+	}
+	return ""
 }

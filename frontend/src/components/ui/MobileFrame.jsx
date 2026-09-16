@@ -10,7 +10,7 @@ export function MobileFrame({
           <span className="h-1.5 w-16 rounded-full bg-line" aria-hidden="true" />
         </div>
         <div
-          className="scroll-thin overflow-y-auto rounded-b-[26px] bg-canvas px-4 pb-6 pt-2"
+          className="scroll-thin relative overflow-y-auto rounded-b-[26px] bg-canvas px-4 pb-6 pt-2"
           style={{ height }}>
           {children}
         </div>

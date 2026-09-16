@@ -1,14 +1,57 @@
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeftIcon, CalendarDaysIcon, MailIcon, MapPinIcon, PhoneIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Pill } from '../components/ui/Pill';
 import { AttendanceHeatmap } from '../components/ui/AttendanceHeatmap';
-import { staff, shifts, weekDays } from '../data/manage';
+import { staff as staticStaff, shifts as staticShifts, weekDays } from '../data/manage';
 import { attendanceDays, initials, roleTone, shiftHours, statusTone } from '../data/staff';
+import api from '../api/client';
+
+const stripMinutes = (t) => (t ? String(t).slice(0, 5).replace(/:00$/, '') : '');
+
+const toProfileShift = (s) => ({
+  staff: s.staff_name,
+  day: s.day,
+  time: `${stripMinutes(s.start_time)}–${stripMinutes(s.end_time)}`,
+  role: s.role
+});
 
 export function StaffProfile() {
   const { id } = useParams();
-  const person = staff.find((p) => p.id === id);
+  const [members, setMembers] = useState(staticStaff);
+  const [shifts, setShifts] = useState(staticShifts);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [staffRes, shiftsRes] = await Promise.all([
+          api('/staff'),
+          api('/shifts')
+        ]);
+        if (cancelled) return;
+        const data = staffRes?.data || [];
+        if (data.length > 0) {
+          setMembers(data.map((m) => ({
+            id: m.id,
+            name: m.name,
+            role: m.role || '',
+            email: '',
+            phone: '',
+            station: '',
+            joined: ''
+          })));
+        }
+        if (staffRes) setShifts((shiftsRes?.data || []).map(toProfileShift));
+      } catch {
+        /* keep static demo data as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const person = members.find((p) => p.id === id) || staticStaff.find((p) => p.id === id);
 
   if (!person) {
     return (
@@ -61,7 +104,7 @@ export function StaffProfile() {
             <div className="min-w-0 flex-1">
               <p className="text-base font-extrabold text-ink">{person.name}</p>
               <p className="font-mono text-xs text-meta">{person.id}</p>
-              <p className="mt-1 text-xs text-meta">Joined {person.joined} · Payroll group A</p>
+              <p className="mt-1 text-xs text-meta">{person.joined ? `Joined ${person.joined} · ` : ''}Payroll group A</p>
             </div>
           </div>
 

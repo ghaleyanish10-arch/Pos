@@ -72,7 +72,7 @@ func TestMigrateAndSeed(t *testing.T) {
 	checkCount("users", 1)
 	checkCount("menu_categories", 5)
 	checkCount("menu_items", 11)
-	checkCount("floor_tables", 5)
+	checkCount("floor_tables", 13)
 	checkCount("store_settings", 1)
 
 	// Seeded menu items must carry photo URLs so frontend cards show images.

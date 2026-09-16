@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { LockIcon } from 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { AlertBanner } from '../components/ui/AlertBanner';
@@ -11,6 +11,7 @@ import { Field, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import { transactions } from '../data/sell';
 import { failedTransactions } from '../data/pos';
+import api from '../api/client';
 
 export function Fiscal() {
   const toast = useToast();
@@ -21,6 +22,31 @@ export function Fiscal() {
   const [auditNote, setAuditNote] = useState('');
   const [overrideInput, setOverrideInput] = useState('');
   const [isOverride, setIsOverride] = useState(false);
+  const [fiscalTxns, setFiscalTxns] = useState(transactions);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/fiscal');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) setFiscalTxns(data.map((g) => ({
+          id: g.transaction_id || g.id,
+          time: new Date(g.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+          fiscalId: g.fiscal_id || '',
+          ref: '',
+          method: '',
+          amount: '',
+          status: g.certified ? 'Success' : 'Pending',
+          certified: g.certified ? 'Certified' : 'Pending',
+        })));
+      } catch {
+        /* keep static transactions as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const openRetry = useCallback((txn) => {
     setSelectedTxn(txn);
@@ -107,7 +133,7 @@ export function Fiscal() {
             </tr>
           </thead>
           <tbody>
-            {transactions.map((t) => {
+            {fiscalTxns.map((t) => {
               const isFailed = t.status === 'Failed';
               const retries = retryCount[t.id] || 0;
               return (

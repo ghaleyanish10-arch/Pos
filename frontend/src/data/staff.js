@@ -1,13 +1,13 @@
 export const roleTone = {
   Kitchen: 'amber',
-  Service: 'blue',
+  Waiter: 'blue',
   Bar: 'purple',
   Host: 'green'
 };
 
 export const roleFill = {
   Kitchen: 'bg-tint-amber text-status-amber border-status-amber/25',
-  Service: 'bg-tint-blue text-status-blue border-status-blue/25',
+  Waiter: 'bg-tint-blue text-status-blue border-status-blue/25',
   Bar: 'bg-tint-purple text-status-purple border-status-purple/25',
   Host: 'bg-tint-green text-status-green border-status-green/25'
 };

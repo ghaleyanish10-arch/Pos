@@ -9,7 +9,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { useToast } from '../components/ui/Toast';
 import { useOrders } from '../state/OrderContext';
 import { api } from '../api/client';
-import { normalizeTicket, shortId } from '../api/normalize';
+import { normalizeTicket, shortId, useElapsedClock } from '../api/normalize';
 import {
   incomingTickets as initIncoming,
   preparingTickets as initPreparing,
@@ -33,6 +33,18 @@ const ticketTitle = (t) => {
   if (type === 'takeaway') return 'Takeaway';
   if (type === 'delivery') return 'Delivery';
   return shortId(t?.id);
+};
+
+// Stable identity for a ticket: which table + exactly which lines. Used to
+// collapse the instant local ticket (OrderContext) with the persisted one the
+// backend returns, so a QR order never appears twice on the board.
+const ticketKey = (t) => {
+  const table = String(t?.table || '').trim().toLowerCase();
+  const items = toLines(t?.items)
+    .map((s) => s.replace(/×/g, 'x').replace(/\s+/g, ' ').trim().toLowerCase())
+    .sort()
+    .join('|');
+  return `${table}::${items}`;
 };
 
 function Items({ ticket }) {
@@ -77,6 +89,18 @@ export function Orders() {
     load();
   }, [load]);
 
+  // Live board: re-fetch periodically and whenever the tab regains focus, so
+  // an order placed from a table QR (customer's phone) shows up on its own.
+  const tick = useElapsedClock(15000);
+  React.useEffect(() => {
+    load();
+  }, [load, tick]);
+  React.useEffect(() => {
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [load]);
+
   const setStatus = (t, status) => {
     setTickets((prev) => (prev || []).map((x) => (x.id === t.id ? { ...x, status } : x)));
     api(`/kds/tickets/${t.id}/bump`, { method: 'PUT', body: { status } }).catch(() => {});
@@ -94,12 +118,18 @@ export function Orders() {
   };
 
   const all = tickets || [];
+  // A local (OrderContext) ticket that the backend already persisted is
+  // hidden — the backend copy drives the board so bumps survive reloads. If
+  // the backend is unreachable the local copy keeps the order visible.
+  const backendKeys = new Set(all.map(ticketKey));
+  const localIncoming = liveIncoming.filter((t) => !backendKeys.has(ticketKey(t)));
+
   const matchesType = (t) =>
     filter === 'All orders' ||
     filter === 'Held' ||
     String(t.type || 'dine-in').toLowerCase() === filter.toLowerCase();
 
-  const combinedIncoming = [...liveIncoming, ...all.filter((t) => t.status === 'incoming')];
+  const combinedIncoming = [...all.filter((t) => t.status === 'incoming'), ...localIncoming];
   const preparing = all.filter((t) => t.status === 'preparing').filter(matchesType);
   const ready = all.filter((t) => t.status === 'ready').filter(matchesType);
   const heldTickets = combinedIncoming.filter((t) => matchesType(t) && heldIds.includes(t.id));

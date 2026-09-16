@@ -12,6 +12,7 @@ import { DetailDrawer, DetailRow, DetailSection } from '../components/ui/DetailD
 import { Dialog } from '../components/ui/Dialog';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
+import { useTables } from '../state/TableContext';
 import { transactions as mockTransactions } from '../data/sell';
 
 const methodIcon = {
@@ -93,6 +94,7 @@ function breakdownFor(t) {
 }
 
 export function Transactions() {
+  const { labelOf } = useTables();
   const [method, setMethod] = useState('All');
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(null);
@@ -116,6 +118,36 @@ export function Transactions() {
   }, []);
 
   const allRows = txList || mockTransactions;
+
+  function handleRefund() {
+    const t = active;
+    if (!t) return;
+    const isMock = typeof t.amount === 'string';
+    const lines = breakdownFor(t).lines;
+    const items = lines.map((l) => `${l.name} × ${l.qty}`);
+    const amount = typeof t.amount === 'number' ? t.amount : 0;
+
+    setTxList((prev) => (prev || allRows).map((row) => (row.id === t.id ? { ...row, status: 'Refunded' } : row)));
+
+    if (isMock) {
+      // API offline — demo row only, no server record to create.
+      toast('Refund initiated · ' + t.id, { tone: 'dark' });
+      setActive(null);
+      return;
+    }
+    api('/refunds', {
+      method: 'POST',
+      body: {
+        transaction_id: String(t.id),
+        items,
+        reason: 'Refund requested from transaction',
+        amount
+      }
+    })
+      .then(() => toast(`Refund requested · ${fmtTxAmount(amount)}`, { tone: 'green' }))
+      .catch(() => toast('Could not request refund', { tone: 'red' }))
+      .finally(() => setActive(null));
+  }
 
   function sendReceiptEmail() {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailTo.trim())) {
@@ -230,7 +262,7 @@ export function Transactions() {
                 <Td className="font-mono text-sm text-meta">{fmtTxTime(txTime(t))}</Td>
                 <Td className="font-mono text-sm font-semibold">{t.id.slice(0, 8).toUpperCase()}</Td>
                 <Td className="text-sm text-meta">{t.ref || '—'}</Td>
-                <Td className="text-sm">{txTable(t) || '—'}</Td>
+                <Td className="text-sm">{txTable(t) ? labelOf(txTable(t)) : '—'}</Td>
                 <Td>
                   <span className="flex items-center gap-2 text-sm">
                     {methodIcon[methodLabel(t.method)]}
@@ -273,12 +305,12 @@ export function Transactions() {
       <DetailDrawer
         open
         onClose={() => setActive(null)}
-        title={active.id}
-        subtitle={[txTime(active) && fmtTxTime(txTime(active)), active.ref || null, txTable(active) || null].filter(Boolean).join(' · ') || 'Transaction details'}
+        title={txTable(active) ? `Table ${labelOf(txTable(active))}` : (active.ref || String(active.id).slice(0, 8).toUpperCase())}
+        subtitle={[txTime(active) && fmtTxTime(txTime(active)), active.ref || null, txStatus(active) || null].filter(Boolean).join(' · ') || 'Transaction details'}
         footer={
         <>
             {active.status === 'Success' &&
-            <Button variant="green" full onClick={() => { toast('Refund initiated · ' + active.id, { tone: 'dark' }); setActive(null); }}>
+            <Button variant="green" full onClick={handleRefund}>
                 Refund
               </Button>
             }
@@ -311,7 +343,7 @@ export function Transactions() {
               <dl className="divide-y divide-line">
                 <DetailRow label="Time" value={txTime(active) ? fmtTxTime(txTime(active)) : '—'} mono />
                 <DetailRow label="Order reference" value={active.ref || '—'} />
-                <DetailRow label="Table" value={txTable(active) || '—'} />
+                <DetailRow label="Table" value={txTable(active) ? labelOf(txTable(active)) : '—'} />
                 <DetailRow label="Amount" value={fmtTxAmount(active.amount)} mono tone="green" />
                 {(isMock || active.fiscal_id) && (
                   <DetailRow label="Fiscal ID" value={isMock ? active.fiscalId : active.fiscal_id} mono />

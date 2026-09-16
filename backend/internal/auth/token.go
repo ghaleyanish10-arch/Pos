@@ -13,6 +13,7 @@ type Claims struct {
 	Email    string `json:"email"`
 	Role     string `json:"role"`
 	BranchID string `json:"branch_id"`
+	TokenType string `json:"typ,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -40,12 +41,27 @@ func GenerateTokenPair(userID, email, role, branchID, secret string, accessExpir
 	}, nil
 }
 
+// GenerateSessionToken mints the shift-length session token issued by clock-in.
+// It is a normal typ=access token so AuthMiddleware and RequireRole treat it
+// exactly like a login token — clock-in changes how the token is minted, not
+// what happens after. It is intentionally NOT stored server-side: revocation
+// is by TTL (clock-out clears the client side; a future refresh-token
+// revocation table would strengthen this, flagged in the clock-out handler).
+func GenerateSessionToken(userID, email, role, branchID, secret string, ttl time.Duration) (token string, expiresAt int64, err error) {
+	s, err := generateToken(userID, email, role, branchID, secret, ttl)
+	if err != nil {
+		return "", 0, err
+	}
+	return s, time.Now().Add(ttl).Unix(), nil
+}
+
 func generateToken(userID, email, role, branchID, secret string, expiry time.Duration) (string, error) {
 	claims := &Claims{
-		UserID:   userID,
-		Email:    email,
-		Role:     role,
-		BranchID: branchID,
+		UserID:    userID,
+		Email:     email,
+		Role:      role,
+		BranchID:  branchID,
+		TokenType: TokenTypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -71,6 +87,11 @@ func ValidateToken(tokenStr, secret string) (*Claims, error) {
 	claims, ok := token.Claims.(*Claims)
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("invalid token")
+	}
+	// Elevation tokens must never authenticate a session. Session tokens carry
+	// typ=access (or nothing, for tokens minted before this field existed).
+	if claims.TokenType == TokenTypeElevation {
+		return nil, fmt.Errorf("elevation token cannot be used as a session token")
 	}
 
 	return claims, nil

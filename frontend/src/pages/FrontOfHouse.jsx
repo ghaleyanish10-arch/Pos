@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { BarcodeIcon, CopyIcon, Edit2Icon, MinusIcon, PlusIcon, QrCodeIcon, SplitIcon } from 'lucide-react';
+import { BarcodeIcon, CopyIcon, Edit2Icon, MinusIcon, PlusIcon, QrCodeIcon, Settings2Icon, SplitIcon } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -57,7 +57,7 @@ const qrFor = (table) => `${window.location.origin}/register/customer?table=${en
 export function FrontOfHouse() {
   const toast = useToast();
   const { role } = useRole();
-  const { tables: floorTables, freeTable, occupiedCount } = useTables();
+  const { tables: floorTables, rooms, freeTable, occupiedCount, renameTable, labelOf, setSeats, seatsOf, addRoom, renameRoom, removeRoom, setRoom } = useTables();
   const [mode, setMode] = useState('Hospitality');
   const [selected, setSelected] = useState(null);
   const [split, setSplit] = useState(0);
@@ -75,10 +75,30 @@ export function FrontOfHouse() {
   }, [floorTables]);
 
   const canRename = role === 'boss' || role === 'manager';
-  const [tableNames, setTableNames] = useState({});
-  const renameFor = (name) => tableNames[name] || name;
-  const [renameTarget, setRenameTarget] = useState(null);
-  const [renameVal, setRenameVal] = useState('');
+  const [editTarget, setEditTarget] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editSeats, setEditSeats] = useState('2');
+  const [editRoom, setEditRoom] = useState('');
+  const [roomsOpen, setRoomsOpen] = useState(false);
+  const [newRoom, setNewRoom] = useState('');
+  const [roomEdits, setRoomEdits] = useState({});
+  const [roomRemove, setRoomRemove] = useState(null);
+
+  const openEdit = useCallback((t) => {
+    setEditTarget(t);
+    setEditName(labelOf(t.name));
+    setEditSeats(String(seatsOf(t.name, t.seats)));
+    setEditRoom(t.room);
+  }, [labelOf, seatsOf]);
+
+  function saveTableEdit() {
+    if (!editTarget) return;
+    renameTable(editTarget.name, editName.trim());
+    setSeats(editTarget.name, Number(editSeats));
+    if (editRoom) setRoom(editTarget.name, editRoom);
+    toast('Table updated', { tone: 'green' });
+    setEditTarget(null);
+  }
 
   const [qrTarget, setQrTarget] = useState(null);
 
@@ -180,6 +200,11 @@ export function FrontOfHouse() {
                   Held ({heldOrders.length})
                 </Pill>
               }
+              {canRename &&
+              <Button size="sm" variant="outline" className="ml-auto" onClick={() => setRoomsOpen(true)}>
+                <Settings2Icon className="h-3.5 w-3.5" /> Rooms
+              </Button>
+              }
             </div>
 
             {chipOptions.length > 1 &&
@@ -219,13 +244,13 @@ export function FrontOfHouse() {
                   }>
                   
                     <div className="flex items-center justify-between">
-                      <span className="text-lg font-extrabold text-ink">{renameFor(t.name)}</span>
+                      <span className="text-lg font-extrabold text-ink">{labelOf(t.name)}</span>
                       <div className="flex items-center gap-1">
                         {canRename &&
                         <button
                           type="button"
-                          aria-label={`Rename ${t.name}`}
-                          onClick={(e) => { e.stopPropagation(); setRenameTarget(t); setRenameVal(tableNames[t.name] || t.name); }}
+                          aria-label={`Edit ${t.name}`}
+                          onClick={(e) => { e.stopPropagation(); openEdit(t); }}
                           className="flex h-6 w-6 items-center justify-center rounded-md text-meta opacity-0 transition-opacity hover:bg-surface hover:text-ink group-hover:opacity-100 focus:opacity-100">
                           <Edit2Icon className="h-3 w-3" />
                         </button>
@@ -252,7 +277,7 @@ export function FrontOfHouse() {
           <Card>
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-extrabold text-ink">{renameFor(sel.name)}</h2>
+                <h2 className="text-lg font-extrabold text-ink">{labelOf(sel.name)}</h2>
                 <p className="text-sm text-meta">{sel.detail}</p>
               </div>
               <Pill tone={stateTone[sel.state]} dot>
@@ -564,49 +589,196 @@ export function FrontOfHouse() {
       </Drawer>
 
       <Dialog
-        open={!!renameTarget}
-        onClose={() => setRenameTarget(null)}
-        title={`Rename ${renameTarget?.name || ''}`}
-        subtitle="This changes how the table is shown across the app."
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        title={`Edit table · ${editTarget ? labelOf(editTarget.name) : ''}`}
+        subtitle="Changes apply across the app — floor, register, bookings."
         footer={
           <>
-            <Button variant="outline" onClick={() => setRenameTarget(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
             <Button
               variant="dark"
-              disabled={!renameVal.trim() || renameVal.trim() === renameTarget?.name}
-              onClick={() => {
-                setTableNames((prev) => {
-                  const next = { ...prev };
-                  if (renameVal.trim() === renameTarget.name) {
-                    delete next[renameTarget.name];
-                  } else {
-                    next[renameTarget.name] = renameVal.trim();
-                  }
-                  return next;
-                });
-                toast('Table renamed', { tone: 'green' });
-                setRenameTarget(null);
-              }}>
-              Save name
+              disabled={!editName.trim() || Number(editSeats) < 1}
+              onClick={saveTableEdit}>
+              Save changes
             </Button>
           </>
         }>
-        <Field label="Table display name">
-          <input
-            className={inputClass}
-            placeholder={renameTarget?.name || ''}
-            value={renameVal}
-            onChange={(e) => setRenameVal(e.target.value)} />
-        </Field>
-        <p className="mt-2 text-xs text-meta">
-          Original name <span className="font-mono font-semibold">{renameTarget?.name}</span> is preserved internally for the order flow.
+        <div className="space-y-4">
+          <Field label="Table display name">
+            <input
+              className={inputClass}
+              placeholder={editTarget?.name || ''}
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)} />
+          </Field>
+          <Field label="Seats (how many people can sit)">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="Fewer seats"
+                onClick={() => setEditSeats((s) => String(Math.max(1, (Number(s) || 1) - 1)))}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-surface text-ink hover:border-ink/30">
+                −
+              </button>
+              <input
+                type="number"
+                min="1"
+                max="30"
+                className={`${inputClass} flex-1 text-center font-mono text-lg font-bold`}
+                value={editSeats}
+                onChange={(e) => setEditSeats(e.target.value)} />
+              <button
+                type="button"
+                aria-label="More seats"
+                onClick={() => setEditSeats((s) => String(Math.min(30, (Number(s) || 1) + 1)))}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-surface text-ink hover:border-ink/30">
+                +
+              </button>
+            </div>
+          </Field>
+          <Field label="Room">
+            <div className="flex flex-wrap gap-2">
+              {rooms.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  aria-pressed={editRoom === r}
+                  onClick={() => setEditRoom(r)}
+                  className={`rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors duration-150 ease-soft ${
+                    editRoom === r
+                      ? 'border-ink bg-ink text-white'
+                      : 'border-line bg-surface text-meta hover:border-ink/30 hover:text-ink'
+                  }`}>
+                  {r}
+                </button>
+              ))}
+              {canRename && (
+                <button
+                  type="button"
+                  onClick={() => { setEditTarget(null); setRoomsOpen(true); }}
+                  className="rounded-full border border-dashed border-line px-3.5 py-1.5 text-[13px] font-semibold text-meta transition-colors duration-150 ease-soft hover:border-ink/30 hover:text-ink">
+                  + New room
+                </button>
+              )}
+            </div>
+          </Field>
+          <p className="text-xs text-meta">
+            Original name <span className="font-mono font-semibold">{editTarget?.name}</span> is preserved internally for the order flow.
+          </p>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={roomsOpen}
+        onClose={() => { setRoomsOpen(false); setNewRoom(''); setRoomEdits({}); setRoomRemove(null); }}
+        title="Rooms"
+        subtitle="Add, rename or remove the dining rooms on your floor plan."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => { setRoomsOpen(false); setNewRoom(''); setRoomEdits({}); setRoomRemove(null); }}>Done</Button>
+            <Button
+              variant="dark"
+              disabled={!newRoom.trim()}
+              onClick={() => {
+                const ok = addRoom(newRoom);
+                if (ok) toast(`Room added · ${newRoom.trim()}`, { tone: 'green' });
+                else toast('That room already exists', { tone: 'red' });
+                setNewRoom('');
+              }}>
+              Add room
+            </Button>
+          </>
+        }>
+        <div className="space-y-3">
+          {rooms.map((room) => {
+            const editing = roomEdits[room] !== undefined ? roomEdits[room] : null;
+            const tableCount = floorTables.filter((t) => t.room === room).length;
+            return (
+              <div
+                key={room}
+                className="flex items-center gap-2 rounded-xl border border-line bg-canvas px-3 py-2.5">
+                {editing !== null ? (
+                  <input
+                    autoFocus
+                    className={`${inputClass} flex-1`}
+                    value={editing}
+                    onChange={(e) => setRoomEdits((p) => ({ ...p, [room]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const ok = renameRoom(room, editing);
+                        if (ok) toast('Room renamed', { tone: 'green' });
+                        else toast('Could not rename — duplicate name?', { tone: 'red' });
+                        setRoomEdits((p) => { const n = { ...p }; delete n[room]; return n; });
+                      }
+                      if (e.key === 'Escape') {
+                        setRoomEdits((p) => { const n = { ...p }; delete n[room]; return n; });
+                      }
+                    }} />
+                ) : (
+                  <div className="flex-1">
+                    <p className="text-sm font-bold text-ink">{room}</p>
+                    <p className="text-xs text-meta">
+                      {tableCount} {tableCount === 1 ? 'table' : 'tables'}
+                    </p>
+                  </div>
+                )}
+                {editing === null && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={`Rename ${room}`}
+                      onClick={() => setRoomEdits((p) => ({ ...p, [room]: room }))}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-meta transition-colors hover:bg-surface hover:text-ink">
+                      <Edit2Icon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${room}`}
+                      disabled={rooms.length <= 1}
+                      onClick={() => setRoomRemove(room)}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-meta transition-colors hover:bg-status-red hover:text-white disabled:cursor-not-allowed disabled:opacity-40">
+                      <MinusIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+          {rooms.length <= 1 && (
+            <p className="text-xs text-meta">At least one room is required.</p>
+          )}
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={!!roomRemove}
+        onClose={() => setRoomRemove(null)}
+        title={`Remove ${roomRemove || ''}?`}
+        subtitle="Its tables will move to another room — nothing is deleted."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setRoomRemove(null)}>Keep room</Button>
+            <Button
+              variant="red"
+              onClick={() => {
+                const ok = removeRoom(roomRemove);
+                if (ok) toast(`Room removed · ${roomRemove}`, { tone: 'dark' });
+                setRoomRemove(null);
+              }}>
+              Remove room
+            </Button>
+          </>
+        }>
+        <p className="text-sm text-meta">
+          Tables currently in <span className="font-semibold text-ink">{roomRemove}</span> will be reassigned to another room automatically.
         </p>
       </Dialog>
 
       <Dialog
         open={!!qrTarget}
         onClose={() => setQrTarget(null)}
-        title={`QR code · ${qrTarget ? renameFor(qrTarget.name) : ''}`}
+        title={`QR code · ${qrTarget ? labelOf(qrTarget.name) : ''}`}
         subtitle={qrTarget ? `Scan with any phone camera — opens the register menu for this table` : ''}
         footer={
           <>
@@ -636,14 +808,14 @@ export function FrontOfHouse() {
           <div className="flex items-center gap-2 rounded-full border border-line bg-canvas px-3.5 py-1.5">
             <QrCodeIcon className="h-3.5 w-3.5 text-status-blue" />
             <span className="text-xs font-semibold text-ink">
-              {qrTarget ? renameFor(qrTarget.name) : ''} · table ordering
+              {qrTarget ? labelOf(qrTarget.name) : ''} · table ordering
             </span>
           </div>
           <p className="max-w-[320px] text-center text-xs text-meta">
             Guests scan this code to order straight from their phone — the table flips to
             {' '}<span className="font-semibold text-ink">Seated</span> on the floor plan the moment they
             open the menu, and every order they place is named after
-            {' '}{qrTarget ? renameFor(qrTarget.name) : 'the table'}. No app download required.
+            {' '}{qrTarget ? labelOf(qrTarget.name) : 'the table'}. No app download required.
           </p>
         </div>
       </Dialog>

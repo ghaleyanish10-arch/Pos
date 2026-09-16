@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MinusIcon, PackageSearchIcon, PlusIcon, PrinterIcon } from 'lucide-react';
+import { CheckCircle2Icon, MinusIcon, PackageSearchIcon, PlusIcon, PrinterIcon } from 'lucide-react';
 import { PageHeader, SectionHeader, Shelf } from '../components/ui/Card';
 import { AlertBanner } from '../components/ui/AlertBanner';
 import { Button } from '../components/ui/Button';
@@ -11,9 +11,37 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import { useNotifications } from '../state/Notifications';
 import { useSettings } from '../state/SettingsContext';
-import { inventory, reorderSuggestions, stockLocations } from '../data/manage';
+import { inventory as staticInventory, reorderSuggestions as staticSuggestions, stockLocations } from '../data/manage';
+import api from '../api/client';
 
 const LOW_STOCK_NOTIFIED = new Set();
+
+function restockedLabel(iso) {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const days = Math.floor((Date.now() - then) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+}
+
+function toDisplayItem(item, staticById) {
+  const s = staticById.get(item.name) || {};
+  return {
+    id: item.id || '',
+    name: item.name,
+    category: item.category || '',
+    stock: Number(item.stock) || 0,
+    capacity: Number(item.capacity) || 0,
+    unit: item.unit || 'u',
+    threshold: Number(item.threshold) || 0,
+    supplier: item.supplier || '',
+    restocked: restockedLabel(item.restocked_at),
+    location: s.location || 'Main floor',
+    estPrice: s.estPrice || 0
+  };
+}
 
 function notifFor(item, extra) {
   return {
@@ -23,14 +51,15 @@ function notifFor(item, extra) {
   };
 }
 
-function buildPo(kind, list) {
-  const source = list ?? inventory;
+function buildPo(kind, list, suggestions) {
+  const source = list && list.length > 0 ? list : staticInventory;
+  const suggList = suggestions && suggestions.length > 0 ? suggestions : staticSuggestions;
   let lines;
   if (kind === 'reorder') {
     lines = source
       .filter((i) => i.stock <= i.threshold)
       .map((i) => {
-        const sugg = reorderSuggestions.find((x) => x.name === i.name);
+        const sugg = suggList.find((x) => x.name === i.name);
         return {
           name: i.name,
           unit: i.unit,
@@ -41,7 +70,7 @@ function buildPo(kind, list) {
       });
   } else {
     const inv = source.find((i) => i.name === kind);
-    const sugg = reorderSuggestions.find((x) => x.name === kind);
+    const sugg = suggList.find((x) => x.name === kind);
     lines = [{
       name: kind,
       unit: inv?.unit,
@@ -130,7 +159,9 @@ export function Inventory() {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(null);
   const [delta, setDelta] = useState(0);
-  const [stock, setStock] = useState(inventory);
+  const [stock, setStock] = useState(staticInventory);
+  const [suggestions, setSuggestions] = useState(staticSuggestions);
+  const [loading, setLoading] = useState(true);
   const toast = useToast();
 
   const [countOpen, setCountOpen] = useState(false);
@@ -139,6 +170,39 @@ export function Inventory() {
   const [counts, setCounts] = useState({});
   const [po, setPo] = useState(null);
   const { add } = useNotifications();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [invRes, sugRes] = await Promise.all([
+          api('/inventory'),
+          api('/inventory/reorder-suggestions')
+        ]);
+        if (cancelled) return;
+        const staticById = new Map(staticInventory.map((i) => [i.name, i]));
+        const apiItems = invRes?.data || [];
+        const apiSugs = sugRes?.data || [];
+        if (apiItems.length > 0) {
+          setStock(apiItems.map((i) => toDisplayItem(i, staticById)));
+          setSuggestions(apiSugs.map((s) => {
+            const match = apiItems.find((i) => i.name === s.name);
+            return {
+              id: s.name,
+              name: s.name,
+              quantity: `${s.quantity} ${match?.unit || ''}`.trim(),
+              note: s.note
+            };
+          }));
+        }
+        setLoading(false);
+      } catch {
+        if (cancelled) return;
+        setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     stock
@@ -160,6 +224,8 @@ export function Inventory() {
   const rows = stock.filter((i) =>
   i.name.toLowerCase().includes(query.toLowerCase())
   );
+
+  const lowCount = stock.filter((i) => i.stock <= i.threshold).length;
 
   function openStockCount() {
     setCountStep(1);
@@ -191,7 +257,7 @@ export function Inventory() {
 
   return (
     <div className="mx-auto w-full max-w-[1400px]">
-      <PageHeader title="Inventory" descriptor="146 tracked items · 12 below threshold">
+      <PageHeader title="Inventory" descriptor={`${loading ? 'Loading…' : `${stock.length} tracked items · ${lowCount} below threshold`}`}>
         <SearchInput
           className="w-[240px]"
           placeholder="Search items"
@@ -201,16 +267,28 @@ export function Inventory() {
         <Button variant="dark" onClick={openStockCount}>New stock count</Button>
       </PageHeader>
 
-      <AlertBanner
-        className="mb-6"
-        action={
-        <Button size="sm" variant="red" onClick={() => setPo(buildPo('reorder', stock))}>
-            Reorder now
-          </Button>
-        }>
-        
-        12 items low — Buff mince, Momo wrappers and Cooking oil are critical
-      </AlertBanner>
+      {lowCount === 0 ? (
+        <div
+          role="status"
+          className="mb-6 flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border border-status-green/30 bg-tint-green px-4 py-3">
+          
+          <div className="flex items-center gap-2.5 text-sm font-semibold text-status-green">
+            <CheckCircle2Icon className="h-4 w-4 shrink-0" />
+            <span>Inventory is full — every item is above its reorder point, nothing to reorder.</span>
+          </div>
+        </div>
+      ) : (
+        <AlertBanner
+          className="mb-6"
+          action={
+            <Button size="sm" variant="red" onClick={() => setPo(buildPo('reorder', stock, suggestions))}>
+              Reorder now
+            </Button>
+          }>
+          
+          {`${lowCount} ${lowCount === 1 ? 'item' : 'items'} low — ${stock.filter((i) => i.stock <= i.threshold).slice(0, 3).map((i) => i.name).join(', ')}`}
+        </AlertBanner>
+      )}
 
       <section className="mb-7">
         <SectionHeader
@@ -220,7 +298,12 @@ export function Inventory() {
         
         <Shelf>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {reorderSuggestions.map((s) =>
+            {suggestions.length === 0 &&
+            <div className="col-span-full rounded-xl border border-line bg-canvas p-5 text-sm text-meta">
+                No items are below their reorder threshold right now.
+              </div>
+            }
+            {suggestions.map((s) =>
             <div
               key={s.name}
               className="flex flex-col rounded-xl border border-line bg-canvas p-4">
@@ -231,7 +314,7 @@ export function Inventory() {
                 </p>
                 <p className="mt-1 text-xs text-meta">{s.note}</p>
                 <div className="mt-auto pt-4">
-                  <Button size="sm" variant="dark" onClick={() => setPo(buildPo(s.name, stock))}>
+                  <Button size="sm" variant="dark" onClick={() => setPo(buildPo(s.name, stock, suggestions))}>
                     Add to PO
                   </Button>
                 </div>
@@ -340,12 +423,16 @@ export function Inventory() {
               variant="green" full
               onClick={() => {
                 notifyIfLow(active.name, active.stock + delta);
+                const next = Math.max(0, Math.round((active.stock + delta) * 10) / 10);
                 setStock((p) => p.map((i) =>
                   i.name === active.name
-                    ? { ...i, stock: Math.max(0, Math.round((i.stock + delta) * 10) / 10), restocked: 'Just now' }
+                    ? { ...i, stock: next, restocked: 'Just now' }
                     : i
                 ));
-                toast(`${active.name} adjusted to ${Math.max(0, active.stock + delta).toFixed(1)} ${active.unit}`, { tone: 'green' });
+                toast(`${active.name} adjusted to ${next.toFixed(1)} ${active.unit}`, { tone: 'green' });
+                if (active.id) {
+                  api(`/inventory/${active.id}/adjust`, { method: 'PUT', body: { delta } }).catch(() => {});
+                }
                 setActive(null);
               }}>
               Save adjustment
@@ -446,6 +533,9 @@ export function Inventory() {
                   toast(`Stock count submitted · ${locationItems.length} items · variance Rs ${moneyEstimate.toLocaleString()}`, { tone: 'green' });
                   countRows.forEach((r) => {
                     if (r.counted !== undefined) notifyIfLow(r.name, r.counted);
+                    if (r.counted !== undefined && r.id) {
+                      api(`/inventory/${r.id}/adjust`, { method: 'PUT', body: { delta: r.counted - r.stock } }).catch(() => {});
+                    }
                   });
                   setStock((p) => p.map((i) => {
                     const c = counts[i.name];

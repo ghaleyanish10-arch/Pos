@@ -40,6 +40,51 @@ func (h *OrderHandler) GetByID(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+// CreatePublic lets a customer submit an order from the table-QR register or
+// the online store with NO session — a customer has no credentials. The order
+// is written exactly like a POS order and surfaces on the staff Orders/KDS as
+// an incoming ticket for that table (or a takeaway when no table is given).
+func (h *OrderHandler) CreatePublic(c *gin.Context) {
+	var req model.CreateOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "items are required"})
+		return
+	}
+
+	tableID := req.TableID
+	branchID := ""
+	if tableID != "" && !tableUUIDRe.MatchString(tableID) {
+		resolved, branch, err := h.repo.ResolveTable(c.Request.Context(), tableID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "table not found"})
+			return
+		}
+		tableID = resolved
+		branchID = branch
+	}
+
+	order := &model.Order{
+		Type:     req.Type,
+		TableID:  &tableID,
+		GuestID:  &req.GuestID,
+		BranchID: strPtr(branchID),
+	}
+	if order.Type == "" {
+		order.Type = "dine-in"
+	}
+
+	if err := h.repo.Create(c.Request.Context(), order, req.Items); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, order)
+}
+
 func (h *OrderHandler) Create(c *gin.Context) {
 	var req model.CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

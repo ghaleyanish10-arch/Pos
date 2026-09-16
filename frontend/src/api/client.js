@@ -1,9 +1,35 @@
 const API_BASE = '/api/v1';
 const TOKEN_KEY = 'mesa_token';
 const USER_KEY = 'mesa_user';
+const DEVICE_KEY = 'mesa_device_id';
 
 let accessToken = localStorage.getItem(TOKEN_KEY) || null;
-let loginInFlight = null;
+
+// Step-up elevation token: held in memory only — never localStorage — so it
+// dies with the tab. It authorizes exactly one privileged action.
+let elevationToken = null;
+
+export function setElevationToken(token) {
+  elevationToken = token || null;
+}
+
+export function clearElevationToken() {
+  elevationToken = null;
+}
+
+// Stable per-browser device id, generated once and reused so clock-in/out and
+// audit rows carry the same terminal identity.
+export function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id) {
+    id =
+      (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
 
 export function getApiUser() {
   try {
@@ -13,59 +39,58 @@ export function getApiUser() {
   }
 }
 
-async function login() {
-  if (loginInFlight) return loginInFlight;
-  loginInFlight = (async () => {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: import.meta.env.VITE_API_EMAIL || 'admin@mesa.os',
-        password: import.meta.env.VITE_API_PASSWORD || 'admin123'
-      })
-    });
-    if (!res.ok) {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
-      const err = new Error('API unavailable');
-      err.offline = true;
-      throw err;
-    }
-    const data = await res.json();
-    accessToken = data.tokens.access_token;
-    localStorage.setItem(TOKEN_KEY, accessToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(data.user));
-    return data.user;
-  })();
-  try {
-    return await loginInFlight;
-  } finally {
-    loginInFlight = null;
-  }
+export function hasApiSession() {
+  return Boolean(accessToken);
+}
+
+// Persist a clock-in session and tell every provider to re-read it.
+export function establishSession(token, user) {
+  accessToken = token;
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  window.dispatchEvent(new Event('mesa-session'));
+}
+
+// Drop the session and flip the shell back to the clock-in screen.
+export function clearApiSession() {
+  accessToken = null;
+  setElevationToken(null);
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+  window.dispatchEvent(new Event('mesa-session'));
 }
 
 async function request(path, opts) {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Device-Id': getDeviceId()
+  };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (elevationToken) headers['X-Elevation-Token'] = elevationToken;
   const res = await fetch(`${API_BASE}${path}`, {
     method: opts.method || 'GET',
     headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
-  if (res.status === 401) {
-    const err = new Error('unauthorized');
-    err.status = 401;
-    throw err;
-  }
   if (!res.ok) {
     let detail = '';
+    let code = '';
+    let action = '';
     try {
-      detail = (await res.json())?.error || '';
+      const body = await res.json();
+      detail = body?.error || '';
+      code = body?.code || '';
+      action = body?.action || '';
     } catch {
       /* non-JSON error body */
     }
     const err = new Error(detail || `request failed: ${res.status}`);
     err.status = res.status;
+    err.code = code;
+    err.action = action;
+    if (res.status === 401 && !code.startsWith('ELEVATION_')) {
+      err.code = code;
+    }
     throw err;
   }
   if (res.status === 204) return null;
@@ -74,24 +99,15 @@ async function request(path, opts) {
 
 export async function api(path, opts = {}) {
   try {
-    if (!accessToken) await login();
     return await request(path, opts);
   } catch (e) {
-    if (e.status === 401) {
-      accessToken = null;
-      localStorage.removeItem(TOKEN_KEY);
-      try {
-        await login();
-        return await request(path, opts);
-      } catch (e2) {
-        e2.offline = true;
-        throw e2;
-      }
+    // A dead/expired session cannot be healed by re-login: the terminal has no
+    // credentials of its own. Surface the error and drop back to clock-in so
+    // the next action prompts a fresh shift. Elevation failures stay as-is.
+    if (e.status === 401 && !(e.code || '').startsWith('ELEVATION_')) {
+      clearApiSession();
     }
-    if (e.offline) throw e;
-    const err = new Error('API unavailable');
-    err.offline = true;
-    throw err;
+    throw e;
   }
 }
 

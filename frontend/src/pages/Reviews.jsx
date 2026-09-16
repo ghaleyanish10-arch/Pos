@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { StarIcon, CheckIcon } from 'lucide-react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -8,6 +8,7 @@ import { StatRow } from '../components/ui/StatCard';
 import { Dialog } from '../components/ui/Dialog';
 import { useToast } from '../components/ui/Toast';
 import { reviews } from '../data/orm';
+import api from '../api/client';
 
 function Stars({ rating }) {
   return (
@@ -60,8 +61,34 @@ export function Reviews() {
   const [consentPlatform, setConsentPlatform] = useState(null);
   const [replies, setReplies] = useState({});
   const [replyTexts, setReplyTexts] = useState({});
+  const [reviewsList, setReviewsList] = useState(reviews);
 
-  const rows = reviews.filter((r) => {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/reviews');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) setReviewsList(data.map((g) => ({
+          id: g.id,
+          author: g.author || '',
+          platform: g.platform || '',
+          rating: g.rating || 0,
+          text: g.text || '',
+          answered: !!g.answered,
+          reply: g.reply || '',
+          when: new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          stale: false,
+        })));
+      } catch {
+        /* keep static reviews as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const rows = reviewsList.filter((r) => {
     if (filter === 'Unanswered') return !r.answered;
     if (filter === 'Low ratings') return r.rating <= 3;
     if (filter === 'All') return true;
@@ -83,6 +110,7 @@ export function Reviews() {
     }));
     setReplyTexts((prev) => ({ ...prev, [reviewId]: '' }));
     toast.success('Reply posted');
+    api(`/reviews/${reviewId}/reply`, { method: 'PUT', body: { reply: text.trim() } }).catch(() => {});
   }
 
   return (

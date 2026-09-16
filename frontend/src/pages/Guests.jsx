@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Drawer } from '../components/ui/Drawer';
@@ -8,6 +8,7 @@ import { Pill } from '../components/ui/Pill';
 import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
 import { useToast } from '../components/ui/Toast';
 import { guestTimeline, guests as guestsData } from '../data/manage';
+import api from '../api/client';
 
 const tierTone = {
   VIP: 'purple',
@@ -15,12 +16,49 @@ const tierTone = {
   New: 'neutral'
 };
 
+const fmtVisit = (iso) => {
+  if (!iso) return 'Never';
+  const d = new Date(iso);
+  const days = Math.round((Date.now() - d.getTime()) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 30) return `${days} days ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const fromApi = (g) => ({
+  id: g.id,
+  name: g.name,
+  initials: g.initials || g.name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || g.name.slice(0, 2).toUpperCase(),
+  visits: g.visits || 0,
+  lastVisit: fmtVisit(g.last_visit),
+  avgSpend: `Rs ${Number(g.avg_spend || 0).toLocaleString('en-IN')}`,
+  tier: g.tier || 'New',
+  segment: Array.isArray(g.segments) ? g.segments : [],
+  note: g.note || undefined
+});
+
 export function Guests() {
   const [segment, setSegment] = useState('All');
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(null);
   const [guestList, setGuestList] = useState(guestsData);
   const toast = useToast();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/guests');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) setGuestList(data.map(fromApi));
+      } catch {
+        /* keep static demo data as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const [addOpen, setAddOpen] = useState(false);
   const [formName, setFormName] = useState('');
@@ -32,7 +70,7 @@ export function Guests() {
 
   const rows = guestList.filter(
     (g) =>
-    (segment === 'All' || g.segment.includes(segment)) &&
+    (segment === 'All' || (g.segment || []).includes(segment)) &&
     g.name.toLowerCase().includes(query.toLowerCase())
   );
 
@@ -64,6 +102,22 @@ export function Guests() {
     setGuestList((p) => [...p, newGuest]);
     toast('Guest added', { tone: 'green' });
     setAddOpen(false);
+    api('/guests', {
+      method: 'POST',
+      body: {
+        name: formName.trim(),
+        phone: formPhone.trim(),
+        email: formEmail.trim(),
+        segments: ['New'],
+        note: formTags || ''
+      }
+    })
+      .then((res) => {
+        if (res?.id) {
+          setGuestList((prev) => prev.map((g) => (g === newGuest ? fromApi(res) : g)));
+        }
+      })
+      .catch(() => {});
   }
 
   return (

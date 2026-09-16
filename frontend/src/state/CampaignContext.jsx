@@ -1,7 +1,34 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { campaigns as initialCampaigns } from '../data/business';
+import api from '../api/client';
 
 const CampaignContext = createContext(null);
+
+// Demo banner shown in the storefront when no live (Scheduled) campaign exists
+// yet — a real campaign scheduled from Marketing takes precedence everywhere.
+export const DEMO_CAMPAIGN = {
+  id: 'demo-scheduled',
+  name: 'Dashain set menu preview',
+  channel: 'Email',
+  audience: '1,204 members',
+  status: 'Scheduled',
+  stat: 'Sends Fri 09:00',
+  previewStart: '2026-09-08',
+  preorderStart: '2026-09-11',
+  orderStart: '2026-09-20',
+  dish: 'Momo Jhol',
+  message: 'Pre-order Momo Jhol now and get 15% off before Dashain week.'
+};
+
+const fromApi = (c) => ({
+  id: c.id,
+  name: c.name,
+  channel: c.channel || 'Email',
+  audience: c.audience || '',
+  status: c.status || 'Draft',
+  stat: c.stat || '',
+  ai: c.ai_generated || false
+});
 
 const at = (d) => (d ? new Date(`${d}T00:00:00`) : null);
 
@@ -52,6 +79,21 @@ export const phaseNext = (c, phase) => {
 export function CampaignProvider({ children }) {
   const [campaignList, setCampaignList] = useState(initialCampaigns);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/campaigns');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) setCampaignList(data.map(fromApi));
+      } catch {
+        /* keep static demo data as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const upsertCampaign = (campaign) => {
     setCampaignList((prev) => {
       const exists = prev.some((c) => c.id === campaign.id);
@@ -59,6 +101,27 @@ export function CampaignProvider({ children }) {
         ? prev.map((c) => (c.id === campaign.id ? campaign : c))
         : [campaign, ...prev];
     });
+    const safe = {
+      name: campaign?.name,
+      channel: campaign?.channel,
+      audience: campaign?.audience,
+      status: campaign?.status
+    };
+    if (campaign?.id) {
+      api(`/campaigns/${campaign.id}`, {
+        method: 'PUT',
+        body: { name: safe.name, status: safe.status }
+      }).catch(() => {});
+    } else {
+      api('/campaigns', { method: 'POST', body: safe })
+        .then((res) => {
+          if (res?.id) {
+            setCampaignList((prev) =>
+              prev.map((c) => (c === campaign ? { ...c, id: res.id } : c)));
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   const deleteCampaign = (id) =>

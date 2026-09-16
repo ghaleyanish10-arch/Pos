@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { DeleteIcon, StoreIcon } from 'lucide-react';
 import { PageHeader, SectionHeader, Shelf } from '../components/ui/Card';
@@ -11,6 +11,7 @@ import { Pill } from '../components/ui/Pill';
 import { StatRow } from '../components/ui/StatCard';
 import { useRole, visibleGroupsFor, canAccess } from '../state/RoleContext';
 import { useSettings } from '../state/SettingsContext';
+import api from '../api/client';
 
 const registerKeys = ['1','2','3','4','5','6','7','8','9','00','0','⌫'];
 const registerOptions = ['Register 1','Register 2','Register 3'];
@@ -40,9 +41,25 @@ export function Home() {
 
   const [countedCash, setCountedCash] = useState('');
 
-  const [grossSales] = useState('24,850');
+  const [grossSales, setGrossSales] = useState('24,850');
   const [totalRefunds] = useState('1,560');
   const [expectedCash] = useState('18,200');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/reports/summary');
+        if (cancelled || !res) return;
+        if (res.total_revenue > 0) {
+          setGrossSales(Math.round(res.total_revenue).toLocaleString('en-IN'));
+        }
+      } catch {
+        /* keep static dashboard numbers as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const pressFloat = (k) => {
     if (k === '⌫') setFloatValue((a) => a.length > 1 ? a.slice(0, -1) : '0');

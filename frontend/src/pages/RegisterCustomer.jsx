@@ -2,8 +2,10 @@ import { useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ExternalLinkIcon, SmartphoneIcon, TabletIcon, MonitorIcon, XIcon } from 'lucide-react';
 import { CustomerStore } from '../components/CustomerStore';
+import { api } from '../api/client';
 import { useOrders } from '../state/OrderContext';
 import { useTables } from '../state/TableContext';
+import { useCampaigns, DEMO_CAMPAIGN } from '../state/CampaignContext';
 import { useToast } from '../components/ui/Toast';
 
 const DEVICES = [
@@ -25,9 +27,15 @@ export function RegisterCustomer() {
   const [params] = useSearchParams();
   const device = params.get('device') || 'desktop';
   const table = (params.get('table') || '').trim();
+  // Preview mode (an explicit ?device= is a staff preview from Online Store).
+  // A plain visit (QR scan, storefront link) is a real customer: show ONLY the
+  // storefront — no device switcher, no "back to the POS" links.
+  const isPreview = params.has('device');
   const framed = DEVICES.find((d) => d.key === device)?.width || null;
   const { addTicket } = useOrders();
   const { occupyTable, markOrdered } = useTables();
+  const { campaignList } = useCampaigns();
+  const campaign = campaignList.find((c) => c.status === 'Scheduled') || DEMO_CAMPAIGN;
   const toast = useToast();
   const seatedRef = useRef(false);
 
@@ -40,8 +48,28 @@ export function RegisterCustomer() {
     }
   }, [table, occupyTable, toast]);
 
-  const handleOrderPlaced = (lines, _subtotal, meta = {}) => {
+  const handleOrderPlaced = async (lines, _subtotal, meta = {}) => {
     const tableLabel = meta.table || table || '';
+    // Persist to the backend so the order shows up in staff Orders/KDS as an
+    // incoming ticket (customers have no session, hence the public endpoint).
+    try {
+      await api('/public/orders', {
+        method: 'POST',
+        body: {
+          type: tableLabel ? 'dine-in' : 'takeaway',
+          table_id: tableLabel,
+          items: (lines || []).map((l) => ({
+            menu_item_id: l.id || '',
+            name: l.name,
+            qty: l.qty,
+            price: l.price
+          }))
+        }
+      });
+    } catch {
+      // Offline / backend hiccup: still keep the order on this device's
+      // ticket board so the kitchen has a record either way.
+    }
     if (tableLabel) markOrdered(tableLabel);
     addTicket({
       id: undefined, // OrderContext assigns the next ticket id
@@ -66,26 +94,30 @@ export function RegisterCustomer() {
   return (
     <div className="mx-auto w-full max-w-[1100px]">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Link
-          to="/online-store"
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-meta transition-colors duration-150 ease-soft hover:text-ink">
-          <XIcon className="h-4 w-4" />
-          Back to online store
-        </Link>
-        <div className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
-          {DEVICES.map((d) => (
+        {isPreview ? (
+          <>
             <Link
-              key={d.key}
-              to={`/register/customer?device=${d.key}${table ? `&table=${encodeURIComponent(table)}` : ''}`}
-              aria-pressed={device === d.key}
-              className={`flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold transition-colors duration-150 ease-soft ${
-                device === d.key ? 'bg-ink text-white' : 'text-meta hover:text-ink'
-              }`}>
-              <d.Icon className="h-3.5 w-3.5" />
-              {d.label}
+              to="/online-store"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-meta transition-colors duration-150 ease-soft hover:text-ink">
+              <XIcon className="h-4 w-4" />
+              Back to online store
             </Link>
-          ))}
-        </div>
+            <div className="flex items-center gap-1 rounded-full border border-line bg-surface p-1">
+              {DEVICES.map((d) => (
+                <Link
+                  key={d.key}
+                  to={`/register/customer?device=${d.key}${table ? `&table=${encodeURIComponent(table)}` : ''}`}
+                  aria-pressed={device === d.key}
+                  className={`flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold transition-colors duration-150 ease-soft ${
+                    device === d.key ? 'bg-ink text-white' : 'text-meta hover:text-ink'
+                  }`}>
+                  <d.Icon className="h-3.5 w-3.5" />
+                  {d.label}
+                </Link>
+              ))}
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="flex justify-center">
@@ -96,21 +128,28 @@ export function RegisterCustomer() {
             <div className="flex h-6 items-center justify-center">
               <span className="h-1.5 w-16 rounded-full bg-line" aria-hidden="true" />
             </div>
-            <div className="scroll-thin max-h-[640px] overflow-y-auto rounded-b-[26px] bg-canvas px-4 pb-4 pt-2">
-              <CustomerStore table={table} onOrderPlaced={handleOrderPlaced} />
+            <div className="scroll-thin relative max-h-[640px] overflow-y-auto rounded-b-[26px] bg-canvas px-4 pb-4 pt-2">
+              <CustomerStore
+                table={table}
+                onOrderPlaced={handleOrderPlaced}
+                campaign={campaign}
+                containDialogs
+              />
             </div>
           </div>
         ) : (
           <div className="w-full max-w-[560px] rounded-card border border-line bg-canvas p-4">
-            <CustomerStore table={table} onOrderPlaced={handleOrderPlaced} />
+            <CustomerStore table={table} onOrderPlaced={handleOrderPlaced} campaign={campaign} />
           </div>
         )}
       </div>
 
-      <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-xs text-meta">
-        <ExternalLinkIcon className="h-3.5 w-3.5" />
-        This is the customer view — orders placed here arrive at the store like online orders.
-      </p>
+      {isPreview && (
+        <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-xs text-meta">
+          <ExternalLinkIcon className="h-3.5 w-3.5" />
+          This is the customer view — orders placed here arrive at the store like online orders.
+        </p>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { StarIcon } from 'lucide-react';
 import { Card, PageHeader, SectionHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -9,6 +9,7 @@ import { Field } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import { useSettings } from '../state/SettingsContext';
 import { surveyResponses } from '../data/orm';
+import api from '../api/client';
 
 function SurveyPreview() {
   const [rating, setRating] = useState(0);
@@ -90,17 +91,44 @@ export function Feedback() {
   const [drawerItem, setDrawerItem] = useState(null);
   const [noteText, setNoteText] = useState('');
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api('/feedback');
+        if (cancelled) return;
+        const data = res?.data || [];
+        if (data.length > 0) setResponses(data.map((g) => ({
+          id: g.id,
+          guest: g.guest_name || '',
+          table: g.table_id || '',
+          rating: g.rating || 0,
+          comment: g.comment || '',
+          when: new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          resolved: !!g.resolved,
+          escalated: !!g.escalated,
+          staffNotes: [],
+        })));
+      } catch {
+        /* keep static survey responses as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const activeItem = drawerItem ? responses.find((s) => s.id === drawerItem.id) : null;
 
   function handleResolve(id) {
     setResponses((prev) => prev.map((s) => s.id === id ? { ...s, resolved: true, escalated: false } : s));
     setDrawerItem(null);
     toast.success('Feedback marked resolved');
+    api(`/feedback/${id}/resolve`, { method: 'PUT' }).catch(() => {});
   }
 
   function handleEscalate(id) {
     setResponses((prev) => prev.map((s) => s.id === id ? { ...s, escalated: true } : s));
     toast('Escalated to manager', { tone: 'amber' });
+    api(`/feedback/${id}/escalate`, { method: 'PUT' }).catch(() => {});
   }
 
   function handleAddNote(id) {

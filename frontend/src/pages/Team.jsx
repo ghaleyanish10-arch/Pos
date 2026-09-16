@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CalendarDaysIcon,
@@ -20,6 +20,29 @@ import { HoverCard, HoverCardContent } from '../components/ui/HoverCard';
 import { useToast } from '../components/ui/Toast';
 import { shifts, staff, weekDays, laborBudget } from '../data/manage';
 import { initials, roleFill, roleTone, shiftCount, weeklyHours } from '../data/staff';
+import api from '../api/client';
+
+const stripMinutes = (t) => (t ? String(t).slice(0, 5).replace(/:00$/, '') : '');
+
+const toStaffMember = (item) => ({
+  id: item.id,
+  name: item.name,
+  role: item.role || '',
+  email: '',
+  phone: '',
+  station: '',
+  joined: '',
+  active: true
+});
+
+const toShift = (s) => ({
+  id: s.id,
+  staff: s.staff_name,
+  role: s.role,
+  day: s.day,
+  time: `${stripMinutes(s.start_time)}–${stripMinutes(s.end_time)}`,
+  staff_id: s.staff_id
+});
 
 const seedThread = (person) => [
   { from: 'them', text: `Hey - quick heads up before tomorrow's ${person.role.toLowerCase()} shift.`, time: '18:42' },
@@ -27,7 +50,7 @@ const seedThread = (person) => [
 ];
 
 const changedStaff = [
-{ name: 'Riya Sharma', role: 'Service', change: '+2h moved to Thu' },
+{ name: 'Riya Sharma', role: 'Waiter', change: '+2h moved to Thu' },
 { name: 'Kiran Lama', role: 'Kitchen', change: 'Added Sat shift' },
 { name: 'Prakash Adhikari', role: 'Bar', change: '-1h removed from Wed' }];
 
@@ -48,6 +71,26 @@ export function Team() {
   const [editingStaff, setEditingStaff] = useState(null);
   const [form, setForm] = useState(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [staffRes, shiftsRes] = await Promise.all([
+          api('/staff'),
+          api('/shifts')
+        ]);
+        if (cancelled) return;
+        const members = staffRes?.data || [];
+        if (members.length > 0) setTeam(members.map(toStaffMember));
+        const shiftsData = shiftsRes?.data || [];
+        if (staffRes) setSchedule(shiftsData.map(toShift));
+      } catch {
+        /* keep static demo data as fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const activeStaff = team.filter((p) => p.active !== false);
   const deactivatedStaff = team.filter((p) => p.active === false);
 
@@ -60,7 +103,7 @@ export function Team() {
 
   const openAddStaff = () => {
     setEditingStaff(null);
-    setForm({ name: '', role: 'Service', email: '', phone: '', station: 'Main floor' });
+    setForm({ name: '', role: 'Waiter', email: '', phone: '', station: 'Main floor' });
     setStaffDrawer(true);
   };
 
@@ -78,13 +121,25 @@ export function Team() {
       toast('Enter a staff name', { tone: 'red' });
       return;
     }
+    const payload = { name: form.name.trim(), role: form.role };
     if (editingStaff) {
       setTeam((prev) =>
         prev.map((p) => (p.name === editingStaff.name ? { ...p, ...form } : p)));
       toast(`${form.name} updated`, { tone: 'green' });
+      if (editingStaff.id) {
+        api(`/staff/${editingStaff.id}`, { method: 'PUT', body: payload }).catch(() => {});
+      }
     } else {
-      setTeam((prev) => [...prev, { ...form, id: nextStaffId, joined: 'Sep 2026' }]);
+      const created = { ...form, id: nextStaffId, joined: 'Sep 2026' };
+      setTeam((prev) => [...prev, created]);
       toast(`${form.name} added to the team`, { tone: 'green' });
+      api('/staff', { method: 'POST', body: payload })
+        .then((res) => {
+          if (res?.id) {
+            setTeam((prev) => prev.map((p) => (p.id === created.id ? { ...p, id: res.id } : p)));
+          }
+        })
+        .catch(() => {});
     }
     setStaffDrawer(false);
     setEditingStaff(null);
@@ -108,7 +163,7 @@ export function Team() {
   const shiftForm = (selected) => ({
     start: selected?.shift?.time.split('–')[0] ?? '10',
     end: selected?.shift?.time.split('–')[1] ?? '18',
-    role: selected?.shift?.role ?? 'Service'
+    role: selected?.shift?.role ?? 'Waiter'
   });
 
   const [shiftDraft, setShiftDraft] = useState(shiftForm(selected));
@@ -126,6 +181,14 @@ export function Team() {
       toast('End time must differ from start', { tone: 'red' });
       return;
     }
+    const pad = (n) => String(n).padStart(2, '0');
+    const shiftBody = {
+      day: String(selected.day),
+      start_time: `${pad(start)}:00`,
+      end_time: `${pad(end)}:00`,
+      role
+    };
+    const staffId = team.find((p) => p.name === selected.staff)?.id;
     const time = `${start}–${end}`;
     if (selected?.shift) {
       const updated = { ...selected.shift, time, role };
@@ -134,6 +197,9 @@ export function Team() {
       toast(`Shift updated · ${weekDays[selected.day]} ${time}`, {
         undo: () => setSchedule(prev)
       });
+      if (selected.shift.id) {
+        api(`/shifts/${selected.shift.id}`, { method: 'PUT', body: shiftBody }).catch(() => {});
+      }
     } else {
       const existing = schedule.find(
         (s) => s.staff === selected.staff && s.day === selected.day && s !== selected.shift);
@@ -145,6 +211,9 @@ export function Team() {
         toast(`Replaced existing ${weekDays[selected.day]} shift · ${time}`, {
           undo: () => setSchedule(prev)
         });
+        if (existing.id) {
+          api(`/shifts/${existing.id}`, { method: 'PUT', body: shiftBody }).catch(() => {});
+        }
       } else {
         const created = { staff: selected.staff, role, day: selected.day, time };
         setSchedule((list) => [...list, created]);
@@ -152,6 +221,16 @@ export function Team() {
           tone: 'green',
           undo: () => setSchedule((list) => list.filter((s) => s !== created))
         });
+        if (staffId) {
+          api('/shifts', { method: 'POST', body: { ...shiftBody, staff_id: staffId } })
+            .then((res) => {
+              if (res?.id) {
+                setSchedule((list) =>
+                  list.map((s) => (s === created ? { ...s, id: res.id, staff_id: staffId } : s)));
+              }
+            })
+            .catch(() => {});
+        }
       }
     }
     setSelected(null);
@@ -165,6 +244,9 @@ export function Team() {
       tone: 'red',
       undo: () => setSchedule((list) => [...list, removed])
     });
+    if (removed.id) {
+      api(`/shifts/${removed.id}`, { method: 'DELETE' }).catch(() => {});
+    }
     setSelected(null);
   };
 
@@ -245,7 +327,6 @@ export function Team() {
 
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
-              <p className="truncate font-mono text-xs text-meta">{person.id}</p>
               <Pill tone={roleTone[person.role]} className="mt-1">{person.role}</Pill>
             </div>
 
@@ -300,7 +381,7 @@ export function Team() {
                 </HoverCard>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
-                  <p className="font-mono text-[11px] text-meta">{person.id}</p>
+                  <p className="truncate text-[11px] font-medium text-meta">{person.role}</p>
                 </div>
                 <ActionMenu
                   size="sm"
@@ -371,7 +452,7 @@ export function Team() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
-                  <p className="truncate font-mono text-xs text-meta">{person.id}</p>
+                  <p className="truncate text-[11px] font-medium text-meta">{person.role}</p>
                   <Pill tone="neutral" className="mt-1">Inactive</Pill>
                 </div>
                 <ActionMenu
@@ -434,7 +515,7 @@ export function Team() {
               value={shiftDraft.role}
               onChange={(e) => setShiftDraft({ ...shiftDraft, role: e.target.value })}>
               <option>Kitchen</option>
-              <option>Service</option>
+              <option>Waiter</option>
               <option>Bar</option>
               <option>Host</option>
             </select>
@@ -632,7 +713,7 @@ export function Team() {
                 className={inputClass}
                 value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option>Service</option>
+                <option>Waiter</option>
                 <option>Kitchen</option>
                 <option>Bar</option>
                 <option>Host</option>

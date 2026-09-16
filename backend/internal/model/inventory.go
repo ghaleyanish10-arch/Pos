@@ -45,5 +45,5 @@ type UpdateInventoryRequest struct {
 }
 
 type AdjustStockRequest struct {
-	Delta float64 `json:"delta" binding:"required"`
+	Delta float64 `json:"delta"`
 }
