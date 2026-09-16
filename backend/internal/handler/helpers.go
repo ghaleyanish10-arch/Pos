@@ -16,3 +16,12 @@ func contextWithTimeout() (context.Context, context.CancelFunc) {
 func ginLog(msg string) {
 	log.Println("[email] " + msg)
 }
+
+// strPtrOrNil converts an empty string to nil; used for nullable uuid columns
+// (branch_id) when the request supplies no value.
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}

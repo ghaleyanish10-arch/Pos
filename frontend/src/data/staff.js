@@ -1,15 +1,15 @@
 export const roleTone = {
-  Kitchen: 'amber',
-  Waiter: 'blue',
-  Bar: 'purple',
-  Host: 'green'
+  Cashier: 'blue',
+  'Store Manager': 'purple',
+  'Inventory Auditor': 'amber',
+  'Corporate Admin': 'green'
 };
 
 export const roleFill = {
-  Kitchen: 'bg-tint-amber text-status-amber border-status-amber/25',
-  Waiter: 'bg-tint-blue text-status-blue border-status-blue/25',
-  Bar: 'bg-tint-purple text-status-purple border-status-purple/25',
-  Host: 'bg-tint-green text-status-green border-status-green/25'
+  Cashier: 'bg-tint-blue text-status-blue border-status-blue/25',
+  'Store Manager': 'bg-tint-purple text-status-purple border-status-purple/25',
+  'Inventory Auditor': 'bg-tint-amber text-status-amber border-status-amber/25',
+  'Corporate Admin': 'bg-tint-green text-status-green border-status-green/25'
 };
 
 export const shiftCount = (name, list) => list.filter((s) => s.staff === name).length;

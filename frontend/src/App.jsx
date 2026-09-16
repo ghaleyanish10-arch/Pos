@@ -14,6 +14,9 @@ import { Home } from './pages/Home';
 import { Register } from './pages/Register';
 import { RegisterCustomer } from './pages/RegisterCustomer';
 import { VerifyEmail } from './pages/VerifyEmail';
+import { Login } from './pages/Login';
+import { Signup } from './pages/Signup';
+import { AuthCallback } from './pages/AuthCallback';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { ResetPassword } from './pages/ResetPassword';
 import { NotFound } from './pages/NotFound';
@@ -64,6 +67,9 @@ export function App() {
             <Route path="/" element={<Home />} />
             <Route path="/register" element={<Register />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/orders" element={<Orders />} />

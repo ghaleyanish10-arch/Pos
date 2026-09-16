@@ -3,6 +3,9 @@ package db
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,12 +43,24 @@ func setupDBTest(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	b, err := os.ReadFile("../../migrations/001_init.sql")
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
+	// Apply every migration in order (mirrors testutil and the production
+	// boot) so the seed sees the same schema real databases get.
+	migrations, err := filepath.Glob("../../migrations/*.sql")
+	if err != nil || len(migrations) == 0 {
+		t.Fatalf("list migrations: %v", err)
 	}
-	if _, err := pool.Exec(context.Background(), string(b)); err != nil {
-		t.Fatalf("Migrate: %v", err)
+	sort.Strings(migrations)
+	for _, m := range migrations {
+		b, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", m, err)
+		}
+		if _, err := pool.Exec(context.Background(), string(b)); err != nil {
+			// Migrations are idempotent by construction; tolerate re-applies.
+			if !strings.Contains(err.Error(), "already exists") {
+				t.Fatalf("run migration %s: %v", m, err)
+			}
+		}
 	}
 	if err := Seed(pool); err != nil {
 		t.Fatalf("Seed: %v", err)

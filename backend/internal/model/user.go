@@ -5,15 +5,16 @@ import (
 )
 
 type User struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Email        string     `json:"email"`
-	PasswordHash string     `json:"-"`
-	Role         string     `json:"role"`
-	BranchID     *string    `json:"branch_id"`
-	HasPIN       bool       `json:"has_pin"`
-	CreatedAt    time.Time  `json:"created_at"`
-	DeletedAt    *time.Time `json:"deleted_at"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	Email           string     `json:"email"`
+	PasswordHash    string     `json:"-"`
+	Role            string     `json:"role"`
+	BranchID        *string    `json:"branch_id"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	HasPIN          bool       `json:"has_pin"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DeletedAt       *time.Time `json:"deleted_at"`
 }
 
 type LoginRequest struct {
@@ -27,6 +28,26 @@ type RegisterRequest struct {
 	Password string `json:"password" binding:"required"`
 	Role     string `json:"role" binding:"required"`
 	BranchID string `json:"branch_id"`
+}
+
+// SignupRequest is the public business-owner signup: name, email and password
+// create a Corporate Admin account (the existing top role). The account is
+// verified by 6-digit code before the admin dashboard unlocks.
+type SignupRequest struct {
+	Name     string `json:"name" binding:"required"`
+	Email    string `json:"email" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+// VerifyCodeRequest submits the 6-digit code emailed at signup.
+type VerifyCodeRequest struct {
+	Email string `json:"email" binding:"required"`
+	Code  string `json:"code" binding:"required"`
+}
+
+// ResendCodeRequest asks for a fresh 6-digit code (throttled to 1/60s).
+type ResendCodeRequest struct {
+	Email string `json:"email" binding:"required"`
 }
 
 type RefreshRequest struct {

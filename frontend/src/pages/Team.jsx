@@ -103,13 +103,13 @@ export function Team() {
 
   const openAddStaff = () => {
     setEditingStaff(null);
-    setForm({ name: '', role: 'Waiter', email: '', phone: '', station: 'Main floor' });
+    setForm({ name: '', role: 'Cashier', email: '', phone: '', station: 'Main floor', pin: '' });
     setStaffDrawer(true);
   };
 
   const openEditStaff = (person) => {
     setEditingStaff(person);
-    setForm({ name: person.name, role: person.role, email: person.email, phone: person.phone, station: person.station });
+    setForm({ name: person.name, role: person.role, email: person.email, phone: person.phone, station: person.station, pin: '' });
     setStaffDrawer(true);
   };
 
@@ -121,25 +121,33 @@ export function Team() {
       toast('Enter a staff name', { tone: 'red' });
       return;
     }
-    const payload = { name: form.name.trim(), role: form.role };
+    const pin = (form.pin || '').trim();
+    if (pin && !/^\d{4,6}$/.test(pin)) {
+      toast('PIN must be 4–6 digits', { tone: 'red' });
+      return;
+    }
+    const payload = { name: form.name.trim(), role: form.role, email: form.email?.trim() || '' };
+    if (pin) payload.pin = pin;
     if (editingStaff) {
       setTeam((prev) =>
         prev.map((p) => (p.name === editingStaff.name ? { ...p, ...form } : p)));
       toast(`${form.name} updated`, { tone: 'green' });
       if (editingStaff.id) {
-        api(`/staff/${editingStaff.id}`, { method: 'PUT', body: payload }).catch(() => {});
+        api(`/staff/${editingStaff.id}`, { method: 'PUT', body: { name: payload.name, role: payload.role } }).catch(() => {});
       }
     } else {
       const created = { ...form, id: nextStaffId, joined: 'Sep 2026' };
       setTeam((prev) => [...prev, created]);
-      toast(`${form.name} added to the team`, { tone: 'green' });
       api('/staff', { method: 'POST', body: payload })
         .then((res) => {
-          if (res?.id) {
-            setTeam((prev) => prev.map((p) => (p.id === created.id ? { ...p, id: res.id } : p)));
+          toast((res?.message) || `${form.name} added to the team`, { tone: 'green' });
+          if (res?.member?.id) {
+            setTeam((prev) => prev.map((p) => (p.id === created.id ? { ...p, id: res.member.id } : p)));
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          toast(`${form.name} added to the team`, { tone: 'green' });
+        });
     }
     setStaffDrawer(false);
     setEditingStaff(null);
@@ -713,10 +721,10 @@ export function Team() {
                 className={inputClass}
                 value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option>Waiter</option>
-                <option>Kitchen</option>
-                <option>Bar</option>
-                <option>Host</option>
+                <option>Cashier</option>
+                <option>Store Manager</option>
+                <option>Inventory Auditor</option>
+                <option>Corporate Admin</option>
               </select>
             </Field>
             <Field label="Email">
@@ -727,6 +735,22 @@ export function Team() {
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="name@mesa.os" />
             </Field>
+            {!editingStaff &&
+            <div>
+              <Field label="Clock-in PIN (4–6 digits)">
+                <input
+                  className={inputClass}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={form.pin}
+                  onChange={(e) => setForm({ ...form, pin: e.target.value })}
+                  placeholder="e.g. 8316" />
+              </Field>
+              <p className="mt-1.5 text-xs text-meta">
+                Optional — setting one lets {form.name || 'this person'} clock in at a terminal with this PIN.
+              </p>
+            </div>
+            }
             <Field label="Phone">
               <input
                 className={inputClass}

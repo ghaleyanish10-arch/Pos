@@ -51,6 +51,31 @@ export function establishSession(token, user) {
   window.dispatchEvent(new Event('mesa-session'));
 }
 
+// Persist an email/password or OAuth session. The login endpoint returns a
+// compact user; hydrate from /auth/me so the shell has name, role and the
+// authoritative email_verified flag before the UI renders.
+export async function authorizeSession(res) {
+  const user = res?.user || {};
+  let hydrated = user;
+  try {
+    const me = await fetch(`${API_BASE}/auth/me`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-Id': getDeviceId(),
+        Authorization: `Bearer ${res?.tokens?.access_token || ''}`
+      }
+    });
+    if (me.ok) {
+      const body = await me.json();
+      if (body?.user) hydrated = body.user;
+    }
+  } catch {
+    /* fall back to the login payload */
+  }
+  establishSession(res.tokens.access_token, hydrated);
+  return hydrated;
+}
+
 // Drop the session and flip the shell back to the clock-in screen.
 export function clearApiSession() {
   accessToken = null;

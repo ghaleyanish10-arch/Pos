@@ -95,18 +95,26 @@ func ensureAdmin(ctx context.Context, pool *pgxpool.Pool, branchID string) error
 	if err != nil {
 		return err
 	}
-	if exists {
-		return nil
+	if !exists {
+		hash, err := bcrypt.GenerateFromPassword([]byte("admin123"), 12)
+		if err != nil {
+			return err
+		}
+		_, err = pool.Exec(ctx,
+			`INSERT INTO users (name, email, password_hash, role, branch_id, email_verified_at)
+			 VALUES ('Mesa Admin', 'admin@mesa.os', $1, 'Corporate Admin', $2, now())`,
+			string(hash), branchID,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte("admin123"), 12)
-	if err != nil {
-		return err
-	}
-
+	// Backfill: any database seeded before email verification existed gets the
+	// demo admin auto-verified so existing owner logins keep working. No other
+	// account is touched.
 	_, err = pool.Exec(ctx,
-		`INSERT INTO users (name, email, password_hash, role, branch_id) VALUES ('Mesa Admin', 'admin@mesa.os', $1, 'Corporate Admin', $2)`,
-		string(hash), branchID,
+		`UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE email = 'admin@mesa.os'`,
 	)
 	return err
 }

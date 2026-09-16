@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { LogOutIcon, MenuIcon, XIcon } from 'lucide-react';
+import { LogOutIcon, MailCheckIcon, MenuIcon, XIcon } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { SyncChip } from './SyncChip';
 import { ClockIn } from '../../pages/ClockIn';
@@ -15,7 +15,54 @@ import { canAccess, frontendRole, ROLES, useRole } from '../../state/RoleContext
 
 // Reachable without a clocked-in session (terminal has no credentials of its own).
 // /register/customer is a standalone public route outside this shell entirely.
-const PUBLIC_PATHS = new Set(['/verify-email', '/forgot-password', '/reset-password']);
+const PUBLIC_PATHS = new Set([
+  '/verify-email',
+  '/forgot-password',
+  '/reset-password',
+  '/login',
+  '/signup',
+  '/auth/callback'
+]);
+
+// Admin-dashboard paths the backend locks behind email verification for
+// Corporate Admin (owner) accounts. Staff-role terminals stay fully open.
+const ADMIN_DASH_PATHS = new Set([
+  '/team',
+  '/reports',
+  '/marketing',
+  '/online-store',
+  '/fiscal',
+  '/permissions',
+  '/settings',
+  '/audit'
+]);
+
+// Shown to an unverified owner clicking into an admin-dashboard page: the API
+// answers 403 anyway; this makes the reason and the next step visible.
+function VerifyGate({ email }) {
+  return (
+    <div className="mx-auto flex min-h-[60vh] w-full max-w-[440px] flex-col items-center justify-center">
+      <div className="w-full rounded-card border border-line bg-surface p-8 text-center">
+        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-tint-amber text-status-amber">
+          <MailCheckIcon className="h-7 w-7" />
+        </span>
+        <h1 className="mt-4 text-xl font-extrabold tracking-tight text-ink">Verify your email first</h1>
+        <p className="mt-2 text-sm text-meta">
+          We sent a 6-digit code to <span className="font-semibold text-ink">{email || 'your inbox'}</span>.
+          Admin tools unlock once it&apos;s entered.
+        </p>
+        <Link
+          to={`/verify-email${email ? `?email=${encodeURIComponent(email)}` : ''}`}
+          className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-ink px-6 text-sm font-bold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
+          Enter verification code
+        </Link>
+        <p className="mt-3 text-xs text-meta">
+          Staff registers, orders and KDS keep working — only admin pages are gated.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function StaffBadge() {
   const { session, clockOut } = useRole();
@@ -149,7 +196,7 @@ export function AppShell() {
   const [mobileNav, setMobileNav] = useState(false);
   const [offline, setOffline] = useState(false);
   const { pathname } = useLocation();
-  const { role } = useRole();
+  const { role, session } = useRole();
   const current = allNavItems.find((i) => i.path === pathname) ||
     allNavItems.find((i) => i.path !== '/' && pathname.startsWith(i.path + '/'));
   const publicPage = PUBLIC_PATHS.has(pathname);
@@ -161,6 +208,13 @@ export function AppShell() {
   }
 
   const allowed = publicPage || canAccess(role, pathname);
+
+  // Owner-realm verify gate: an unverified Corporate Admin can still run the
+  // terminal, but admin-dashboard pages show the verification prompt instead.
+  const adminPath = [...ADMIN_DASH_PATHS].some(
+    (p) => pathname === p || pathname.startsWith(p + '/')
+  );
+  const verifyGate = role === 'boss' && session?.email_verified === false && adminPath;
 
   return (
     <div className="flex h-full w-full bg-canvas">
@@ -221,7 +275,9 @@ export function AppShell() {
         </header>
 
         <main className="scroll-thin flex-1 overflow-y-auto px-4 py-6 lg:px-8 lg:py-8">
-          {allowed ? (
+          {verifyGate ? (
+            <VerifyGate email={session.email} />
+          ) : allowed ? (
             <ErrorBoundary key={pathname}>
               <Outlet />
             </ErrorBoundary>

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -46,15 +47,182 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	emailVerified := false
+	if u, gerr := h.repo.GetByID(c.Request.Context(), userID); gerr == nil {
+		emailVerified = u.EmailVerifiedAt != nil
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
-			"id":        userID,
-			"email":     email,
-			"role":      role,
-			"branch_id": branchID,
+			"id":             userID,
+			"email":          email,
+			"role":           role,
+			"branch_id":      branchID,
+			"email_verified": emailVerified,
 		},
 		"tokens": tokens,
 	})
+}
+
+// sendVerificationCode issues a fresh 6-digit code and emails it. Returns
+// whether the email actually went out (false = email not configured, or the
+// send failed — the account is still created either way).
+func (h *AuthHandler) sendVerificationCode(c *gin.Context, userID, emailAddr, name string) bool {
+	if h.email == nil || !h.email.Enabled() {
+		return false
+	}
+	code, err := h.svc.IssueCode(c.Request.Context(), userID)
+	if err != nil {
+		ginLog("failed to issue verification code: " + err.Error())
+		return false
+	}
+	ctx, cancel := contextWithTimeout()
+	defer cancel()
+	if _, serr := h.email.SendVerificationCode(ctx, emailAddr, name, code); serr != nil {
+		ginLog("failed to send verification code: " + serr.Error())
+		return false
+	}
+	return true
+}
+
+// Signup is the public business-owner flow: a name, email and password create
+// a Corporate Admin (the existing top role) plus attach them to their branch
+// (the business/tenant). The account is then verified by a 6-digit code mailed
+// by Resend before the admin dashboard unlocks.
+func (h *AuthHandler) Signup(c *gin.Context) {
+	var req model.SignupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Email = strings.TrimSpace(req.Email)
+	if len(req.Password) < 8 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters"})
+		return
+	}
+	if !strings.Contains(req.Email, "@") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "enter a valid email address"})
+		return
+	}
+
+	userID, err := h.svc.Register(c.Request.Context(), req.Name, req.Email, req.Password, "Corporate Admin", "")
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "an account with that email already exists"})
+		return
+	}
+
+	// Business/tenant = branch. Claim the default branch for the new owner.
+	if branchID, berr := h.svc.EnsureDefaultBranch(c.Request.Context()); berr == nil {
+		_ = h.svc.SetBranch(c.Request.Context(), userID, branchID)
+	}
+
+	verificationSent := h.sendVerificationCode(c, userID, req.Email, req.Name)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":               "account created — check your email for the 6-digit verification code",
+		"email_verification_sent": verificationSent,
+	})
+}
+
+// VerifyCode checks the submitted 6-digit code against the stored one,
+// validates expiry and single-use, then marks the account verified.
+func (h *AuthHandler) VerifyCode(c *gin.Context) {
+	var req model.VerifyCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email and code are required"})
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	req.Code = strings.TrimSpace(req.Code)
+
+	user, err := h.repo.GetByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification code"})
+		return
+	}
+	if user.EmailVerifiedAt != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email already verified"})
+		return
+	}
+
+	if err := h.svc.ConsumeCode(c.Request.Context(), user.ID, req.Code); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification code"})
+		return
+	}
+
+	if err := h.svc.MarkEmailVerified(c.Request.Context(), user.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify account"})
+		return
+	}
+
+	// Welcome email is best-effort; verification itself already succeeded.
+	if h.email != nil && h.email.Enabled() {
+		ctx, cancel := contextWithTimeout()
+		defer cancel()
+		if _, serr := h.email.SendWelcomeEmail(ctx, user.Email, user.Name); serr != nil {
+			ginLog("welcome email failed: " + serr.Error())
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "email verified — welcome to Mesa OS"})
+}
+
+// ResendCode sends a fresh 6-digit code, throttled to one per 60 seconds.
+// Unknown addresses get the same "on its way" answer so the endpoint never
+// reveals whether an account exists.
+func (h *AuthHandler) ResendCode(c *gin.Context) {
+	var req model.ResendCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+
+	user, err := h.repo.GetByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "if that address is registered, a new code is on its way"})
+		return
+	}
+	if user.EmailVerifiedAt != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "that email is already verified"})
+		return
+	}
+
+	ok, err := h.svc.CanResend(c.Request.Context(), user.ID)
+	if err != nil || !ok {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "please wait 60 seconds before requesting another code"})
+		return
+	}
+
+	sent := h.sendVerificationCode(c, user.ID, user.Email, user.Name)
+	c.JSON(http.StatusOK, gin.H{
+		"message":                 "if that address is registered, a new code is on its way",
+		"email_verification_sent": sent,
+	})
+}
+
+// Me returns the current session's profile — used after the Google OAuth
+// redirect lands on the frontend, and by the verify gate.
+func (h *AuthHandler) Me(c *gin.Context) {
+	userID := c.GetString("user_id")
+	user, err := h.repo.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	branchID := ""
+	if user.BranchID != nil {
+		branchID = *user.BranchID
+	}
+	c.JSON(http.StatusOK, gin.H{"user": gin.H{
+		"id":             user.ID,
+		"name":           user.Name,
+		"email":          user.Email,
+		"role":           user.Role,
+		"branch_id":      branchID,
+		"email_verified": user.EmailVerifiedAt != nil,
+	}})
 }
 
 // Register creates the account and emails the verification link to the user's

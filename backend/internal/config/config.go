@@ -30,6 +30,13 @@ type Config struct {
 	EmailFrom    string
 	EmailFromName string
 	AppURL       string
+
+	// Google OAuth — admin/owner signup. When unset, the Google sign-in
+	// endpoints answer 503 ("not configured") and email+password signup
+	// remains fully available.
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
 }
 
 func Load() *Config {
@@ -54,6 +61,10 @@ func Load() *Config {
 		EmailFrom:    getEnv("EMAIL_FROM", ""),
 		EmailFromName: getEnv("EMAIL_FROM_NAME", "Mesa OS"),
 		AppURL:       getEnv("APP_URL", "http://localhost:5173"),
+
+		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
+		GoogleRedirectURL:  getEnv("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/v1/auth/google/callback"),
 	}
 }
 

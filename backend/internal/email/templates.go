@@ -49,3 +49,25 @@ func (s *Service) SendWelcomeEmail(ctx context.Context, to, name string) (string
 	text := fmt.Sprintf("Your Mesa OS account is verified. Open the app: %s", home)
 	return s.Send(ctx, to, "Welcome to Mesa OS", html, text)
 }
+
+// SendVerificationCode emails the 6-digit code the user types into the
+// verify-email screen. The code expires in 10 minutes and is single-use.
+func (s *Service) SendVerificationCode(ctx context.Context, to, name, code string) (string, error) {
+	html := shell("Verify your email", fmt.Sprintf(`
+      <h1 style="margin:0 0 12px;font-size:24px;color:#111">Hey %s</h1>
+      <p style="margin:0 0 20px;font-size:15px;color:#333;line-height:1.6">
+        Enter this code to activate your Mesa OS account. It expires in 10 minutes
+        and can only be used once.
+      </p>
+      %s`, name, codeBox(code)))
+	text := fmt.Sprintf("Your Mesa OS verification code is %s. It expires in 10 minutes and can only be used once.", code)
+	return s.Send(ctx, to, "Your Mesa OS verification code", html, text)
+}
+
+// codeBox renders the 6-digit code as large letter-spaced digits that are
+// easy to read from a phone screen.
+func codeBox(code string) string {
+	return fmt.Sprintf(
+		`<div style="margin:24px 0;padding:20px;background:#f5f5f4;border-radius:12px;text-align:center;font-family:monospace;font-size:34px;font-weight:bold;letter-spacing:10px;color:#111">%s</div>`,
+		code)
+}

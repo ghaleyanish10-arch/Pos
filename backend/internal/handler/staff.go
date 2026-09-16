@@ -2,18 +2,38 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mesa-os/backend/internal/auth"
 	"github.com/mesa-os/backend/internal/model"
 	"github.com/mesa-os/backend/internal/repo"
 )
 
+// allowedStaffRoles are the exhaustively supported RBAC roles. A staff member
+// is exactly one of these — never a self-invented label.
+var allowedStaffRoles = map[string]bool{
+	"Cashier":          true,
+	"Store Manager":    true,
+	"Inventory Auditor": true,
+	"Corporate Admin":  true,
+}
+
 type StaffHandler struct {
-	repo *repo.StaffRepo
+	repo     *repo.StaffRepo
+	authSvc  *auth.Service
+	userRepo *repo.UserRepo
 }
 
 func NewStaffHandler(r *repo.StaffRepo) *StaffHandler {
 	return &StaffHandler{repo: r}
+}
+
+// SetAuthDeps injects the services needed to create PIN-login users from the
+// Team screen. Optional: when not set, the legacy staff_members-only flow runs.
+func (h *StaffHandler) SetAuthDeps(svc *auth.Service, userRepo *repo.UserRepo) {
+	h.authSvc = svc
+	h.userRepo = userRepo
 }
 
 func (h *StaffHandler) List(c *gin.Context) {
@@ -33,13 +53,48 @@ func (h *StaffHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Role = strings.TrimSpace(req.Role)
+	if req.Name == "" || req.Role == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and role are required"})
+		return
+	}
+	if !allowedStaffRoles[req.Role] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported role — pick Cashier, Store Manager, Inventory Auditor or Corporate Admin"})
+		return
+	}
 
 	branchID, _ := c.Get("branch_id")
+	branch := ""
+	if b, ok := branchID.(string); ok {
+		branch = b
+	}
+
+	// A staff PIN upgrades the row into a real users account so the person can
+	// clock in at a terminal. Without a PIN we keep the legacy staff_members
+	// record (roster-only, no login).
+	userID := ""
+	if req.Pin != "" {
+		if h.authSvc == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "pin provisioning is not configured"})
+			return
+		}
+		id, err := h.authSvc.CreatePINUser(c.Request.Context(), req.Name, req.Email, req.Role, branch, req.Pin)
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "pin") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+		userID = id
+	}
 
 	member := &model.StaffMember{
 		Name:     req.Name,
 		Role:     req.Role,
-		BranchID: strPtr(branchID.(string)),
+		BranchID: strPtrOrNil(branch),
 	}
 
 	if err := h.repo.Create(c.Request.Context(), member); err != nil {
@@ -47,7 +102,16 @@ func (h *StaffHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, member)
+	message := member.Name + " added as " + member.Role
+	if userID != "" {
+		message += " — PIN clock-in enabled"
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"member":  member,
+		"user_id": userID,
+		"message": message,
+	})
 }
 
 func (h *StaffHandler) Update(c *gin.Context) {

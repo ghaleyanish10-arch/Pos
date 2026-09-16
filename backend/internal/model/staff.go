@@ -19,8 +19,10 @@ type Shift struct {
 }
 
 type CreateStaffRequest struct {
-	Name string `json:"name" binding:"required"`
-	Role string `json:"role" binding:"required"`
+	Name  string `json:"name" binding:"required"`
+	Role  string `json:"role" binding:"required"`
+	Email string `json:"email"`
+	Pin   string `json:"pin"`
 }
 
 type CreateShiftRequest struct {

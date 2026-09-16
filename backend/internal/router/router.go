@@ -75,6 +75,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	inventoryH := handler.NewInventoryHandler(inventoryRepo)
 	guestH := handler.NewGuestHandler(guestRepo)
 	staffH := handler.NewStaffHandler(staffRepo)
+	staffH.SetAuthDeps(authSvc, userRepo)
 	bookingH := handler.NewBookingHandler(bookingRepo)
 	invoiceH := handler.NewInvoiceHandler(invoiceRepo)
 	invoiceH.SetMailer(smtpMailer)
@@ -97,6 +98,10 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	// Auth middleware
 	authMW := middleware.AuthMiddleware(cfg.JWTSecret)
 
+	// Admin-dashboard gate: Corporate Admin owners must verify their email
+	// before these routes open up. Staff roles pass through untouched.
+	verified := middleware.RequireEmailVerified(pool)
+
 	api := r.Group("/api/v1")
 
 	// Public routes
@@ -111,6 +116,17 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		// no session). The order lands in the orders table and KDS as an
 		// incoming ticket, so staff Orders/KDS pick it up.
 		api.POST("/public/orders", orderH.CreatePublic)
+
+		// Public business-owner signup + 6-digit email verification. The
+		// account can sign in immediately; the admin dashboard stays locked
+		// until a code is entered.
+		api.POST("/auth/signup", authH.Signup)
+		api.POST("/auth/verify-code", authH.VerifyCode)
+		api.POST("/auth/resend-code", authH.ResendCode)
+
+		// Google OAuth — server-side code exchange; the secret never leaves here.
+		api.GET("/auth/google", authH.GoogleRedirect)
+		api.GET("/auth/google/callback", authH.GoogleCallback)
 
 		// PIN elevation (protected: requires a terminal session)
 		api.POST("/auth/elevate", authMW, elevationH.Elevate)
@@ -138,6 +154,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	{
 		// Auth
 		protected.POST("/auth/register", middleware.RequireRole("Corporate Admin"), authH.Register)
+		protected.GET("/auth/me", authH.Me)
 
 		// Orders
 		protected.GET("/orders", orderH.List)
@@ -197,29 +214,29 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.PUT("/guests/:id", guestH.Update)
 		protected.GET("/guests/:id/timeline", guestH.Timeline)
 
-		// Staff
-		protected.GET("/staff", middleware.RequireRole("Store Manager"), staffH.List)
-		protected.POST("/staff", middleware.RequireRole("Store Manager"), staffH.Create)
-		protected.PUT("/staff/:id", middleware.RequireRole("Store Manager"), staffH.Update)
+		// Staff — admin dashboard, owner-verified before these open
+		protected.GET("/staff", middleware.RequireRole("Store Manager"), verified, staffH.List)
+		protected.POST("/staff", middleware.RequireRole("Store Manager"), verified, staffH.Create)
+		protected.PUT("/staff/:id", middleware.RequireRole("Store Manager"), verified, staffH.Update)
 
 		// PIN management — boss-only set/reset with password re-auth
 		protected.GET("/staff/pin-holders", elevationH.ListPINHolders)
-		protected.GET("/staff/pin-accounts", middleware.RequireRole("Corporate Admin"), elevationH.ListUsers)
-		protected.PUT("/staff/:id/pin", middleware.RequireRole("Corporate Admin"), elevationH.SetPIN)
+		protected.GET("/staff/pin-accounts", middleware.RequireRole("Corporate Admin"), verified, elevationH.ListUsers)
+		protected.PUT("/staff/:id/pin", middleware.RequireRole("Corporate Admin"), verified, elevationH.SetPIN)
 
 		// Terminal (approved device) management — boss-only. Managers approve
 		// terminals with their PIN at the terminal itself; only the boss can
 		// revoke an approval.
-		protected.GET("/staff/devices", middleware.RequireRole("Corporate Admin"), clockinH.ListDevices)
-		protected.DELETE("/staff/devices/:id", middleware.RequireRole("Corporate Admin"), clockinH.DisableDevice)
+		protected.GET("/staff/devices", middleware.RequireRole("Corporate Admin"), verified, clockinH.ListDevices)
+		protected.DELETE("/staff/devices/:id", middleware.RequireRole("Corporate Admin"), verified, clockinH.DisableDevice)
 
 		// Server notifications (lockouts, high-risk approvals)
 		protected.GET("/notifications", elevationH.ListNotifications)
 		protected.PUT("/notifications/:id/read", elevationH.MarkNotificationRead)
-		protected.GET("/shifts", middleware.RequireRole("Store Manager"), staffH.ListShifts)
-		protected.POST("/shifts", middleware.RequireRole("Store Manager"), staffH.CreateShift)
-		protected.PUT("/shifts/:id", middleware.RequireRole("Store Manager"), staffH.UpdateShift)
-		protected.DELETE("/shifts/:id", middleware.RequireRole("Store Manager"), staffH.DeleteShift)
+		protected.GET("/shifts", middleware.RequireRole("Store Manager"), verified, staffH.ListShifts)
+		protected.POST("/shifts", middleware.RequireRole("Store Manager"), verified, staffH.CreateShift)
+		protected.PUT("/shifts/:id", middleware.RequireRole("Store Manager"), verified, staffH.UpdateShift)
+		protected.DELETE("/shifts/:id", middleware.RequireRole("Store Manager"), verified, staffH.DeleteShift)
 
 		// Bookings
 		protected.GET("/tables", bookingH.ListTables)
@@ -232,10 +249,10 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.PUT("/waitlist/:id/notify", bookingH.NotifyWaitlist)
 
 		// Reports
-		protected.GET("/reports/revenue", middleware.RequireRole("Store Manager"), reportH.Revenue)
-		protected.GET("/reports/top-sellers", middleware.RequireRole("Store Manager"), reportH.TopSellers)
-		protected.GET("/reports/slow-movers", middleware.RequireRole("Store Manager"), reportH.SlowMovers)
-		protected.GET("/reports/summary", middleware.RequireRole("Store Manager"), reportH.Summary)
+		protected.GET("/reports/revenue", middleware.RequireRole("Store Manager"), verified, reportH.Revenue)
+		protected.GET("/reports/top-sellers", middleware.RequireRole("Store Manager"), verified, reportH.TopSellers)
+		protected.GET("/reports/slow-movers", middleware.RequireRole("Store Manager"), verified, reportH.SlowMovers)
+		protected.GET("/reports/summary", middleware.RequireRole("Store Manager"), verified, reportH.Summary)
 
 		// Invoices
 		protected.GET("/invoices", middleware.RequireRole("Store Manager"), invoiceH.List)
@@ -251,22 +268,22 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.POST("/loyalty/redeem", loyaltyH.Redeem)
 
 		// Marketing
-		protected.GET("/campaigns", middleware.RequireRole("Store Manager"), marketingH.List)
-		protected.POST("/campaigns", middleware.RequireRole("Corporate Admin"), marketingH.Create)
-		protected.PUT("/campaigns/:id", middleware.RequireRole("Corporate Admin"), marketingH.Update)
+		protected.GET("/campaigns", middleware.RequireRole("Store Manager"), verified, marketingH.List)
+		protected.POST("/campaigns", middleware.RequireRole("Corporate Admin"), verified, marketingH.Create)
+		protected.PUT("/campaigns/:id", middleware.RequireRole("Corporate Admin"), verified, marketingH.Update)
 
 		// Online Store
-		protected.GET("/store/settings", storeH.GetSettings)
-		protected.PUT("/store/settings", middleware.RequireRole("Corporate Admin"), storeH.UpdateSettings)
+		protected.GET("/store/settings", verified, storeH.GetSettings)
+		protected.PUT("/store/settings", middleware.RequireRole("Corporate Admin"), verified, storeH.UpdateSettings)
 
 		// POS
 		protected.PUT("/pos/tables/:id", posH.UpdateTableState)
 		protected.GET("/pos/tables/:id/bill", posH.GetTableBill)
 
 		// Fiscal
-		protected.GET("/fiscal", middleware.RequireRole("Corporate Admin"), fiscalH.List)
-		protected.GET("/fiscal/:transaction_id", middleware.RequireRole("Corporate Admin"), fiscalH.GetByTransaction)
-		protected.POST("/fiscal", middleware.RequireRole("Corporate Admin"), fiscalH.Create)
+		protected.GET("/fiscal", middleware.RequireRole("Corporate Admin"), verified, fiscalH.List)
+		protected.GET("/fiscal/:transaction_id", middleware.RequireRole("Corporate Admin"), verified, fiscalH.GetByTransaction)
+		protected.POST("/fiscal", middleware.RequireRole("Corporate Admin"), verified, fiscalH.Create)
 
 		// Recipes
 		protected.GET("/recipes", middleware.RequireRole("Store Manager"), recipeH.List)
@@ -300,12 +317,12 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.PUT("/feedback/:id/escalate", middleware.RequireRole("Store Manager"), feedbackH.Escalate)
 
 		// Permissions
-		protected.GET("/permissions", middleware.RequireRole("Corporate Admin"), permissionH.List)
-		protected.GET("/permissions/:role", middleware.RequireRole("Corporate Admin"), permissionH.GetByRole)
-		protected.PUT("/permissions/:role", middleware.RequireRole("Corporate Admin"), permissionH.Update)
+		protected.GET("/permissions", middleware.RequireRole("Corporate Admin"), verified, permissionH.List)
+		protected.GET("/permissions/:role", middleware.RequireRole("Corporate Admin"), verified, permissionH.GetByRole)
+		protected.PUT("/permissions/:role", middleware.RequireRole("Corporate Admin"), verified, permissionH.Update)
 
 		// Audit
-		protected.GET("/audit", middleware.RequireRole("Corporate Admin"), auditH.List)
+		protected.GET("/audit", middleware.RequireRole("Corporate Admin"), verified, auditH.List)
 
 		// System Health
 		protected.GET("/health/branches", reportH.SystemHealth)
