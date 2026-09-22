@@ -13,6 +13,7 @@ import { Button } from '../components/ui/Button';
 import { Pill } from '../components/ui/Pill';
 import { useToast } from '../components/ui/Toast';
 import { useSettings } from '../state/SettingsContext';
+import { useSound } from '../state/SoundContext';
 import { printReceiptHtml } from '../utils/printReceipt';
 import api from '../api/client';
 
@@ -28,6 +29,7 @@ const methods = [
 
 export function ManualPayment() {
   const toast = useToast();
+  const { play } = useSound();
   const { settings } = useSettings();
   const [amount, setAmount] = useState('2480');
   const [method, setMethod] = useState('Cash');
@@ -52,11 +54,13 @@ export function ManualPayment() {
         body: { amount: value, method: method.toLowerCase() }
       });
       setRecord({ id: tx?.id || null, offline: false });
-      toast.success(`Rs ${display} payment recorded in Transactions`);
+      play('paymentSuccess');
+      toast.success(`Rs ${display} payment recorded in Transactions`, { silent: true });
     } catch {
       // API offline — keep the local receipt but be honest that nothing was recorded.
       setRecord({ id: null, offline: true });
-      toast.error('Payment completed, but the server is unreachable — it was not recorded in Transactions', { tone: 'red' });
+      play('paymentFailed');
+      toast.error('Payment completed, but the server is unreachable — it was not recorded in Transactions', { tone: 'red', silent: true });
     }
   };
 
@@ -65,6 +69,65 @@ export function ManualPayment() {
     setAmount('2480');
     setMethod('Cash');
     setRecord(null);
+  };
+
+  // Void files a real refund against the recorded transaction when there is
+  // one. Refunds are Store-Manager gated, so a cashier sees an honest
+  // "needs a supervisor" message instead of a silent no-op.
+  const handleVoid = async () => {
+    const txId = record?.id;
+    if (!txId || record?.offline) {
+      toast(record?.offline
+        ? 'That payment was never recorded server-side — nothing to void'
+        : 'Complete a payment before voiding', { tone: 'amber' });
+      return;
+    }
+    setConfirmed(false);
+    try {
+      await api('/refunds', {
+        method: 'POST',
+        body: {
+          transaction_id: String(txId),
+          items: [],
+          reason: 'Voided from the register',
+          amount: Number(amount || 0)
+        }
+      });
+      setRecord(null);
+      toast('Void recorded — refund request filed', { tone: 'green' });
+    } catch (e) {
+      if (e?.status === 403) {
+        toast('Voids need a manager/supervisor session — file it from Refunds instead', { tone: 'amber' });
+      } else {
+        toast('Could not file the void — request it from Refunds', { tone: 'red' });
+      }
+    }
+  };
+
+  // Email receipt goes through the same PUT /transactions/:id/email the
+  // Transactions page uses (real SMTP when configured, honest fallback).
+  const handleEmailReceipt = async () => {
+    const txId = record?.id;
+    if (!txId || record?.offline) {
+      toast(record?.offline
+        ? 'That payment was not recorded — nothing to email'
+        : 'Complete a payment before emailing', { tone: 'amber' });
+      return;
+    }
+    const to = window.prompt('Email the receipt to', '');
+    if (!to) return;
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())) {
+      toast('Enter a valid email address', { tone: 'red' });
+      return;
+    }
+    try {
+      const res = await api(`/transactions/${txId}/email`, { method: 'PUT', body: { to: to.trim() } });
+      toast(res?.message || `Receipt emailed to ${to.trim()}`, { tone: 'green' });
+    } catch (e) {
+      toast(e?.status === 503
+        ? 'SMTP not configured on the server — sending via your mail app instead'
+        : (e?.message || 'Could not send email'), { tone: e?.status === 503 ? 'amber' : 'red' });
+    }
   };
 
   const press = (k) => {
@@ -110,7 +173,7 @@ export function ManualPayment() {
     if (ok) {
       toast.success('Receipt printed');
     } else {
-      toast.error('Enable pop-ups to print this receipt');
+      toast.error('Printing was blocked by the browser — try again.');
     }
   };
 
@@ -126,7 +189,7 @@ export function ManualPayment() {
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
         <Card>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+          <p className="text-caption font-semibold text-meta">
             Amount due
           </p>
           <p className="mt-1 font-mono text-[44px] font-extrabold leading-none tracking-tight text-ink">
@@ -164,7 +227,7 @@ export function ManualPayment() {
         </Card>
 
         <Card>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+          <p className="text-caption font-semibold text-meta">
             Payment method
           </p>
           <div className="mt-3 grid grid-cols-2 gap-3">
@@ -243,7 +306,7 @@ export function ManualPayment() {
                   <span className="font-mono text-xs text-meta">{paidAt}</span>
                 </div>
                 <div className="mt-4 border-b border-dashed border-line pb-4 text-center">
-                  <p className="text-sm font-bold uppercase tracking-[0.12em] text-ink">
+                  <p className="text-sm font-bold text-ink">
                     {settings.businessName}
                   </p>
                   <p className="text-xs text-meta">VAT {settings.vatNo} · Table 12</p>
@@ -288,11 +351,7 @@ export function ManualPayment() {
                   Fiscal ID IRD-2026-08842 certified
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => {
-                    setConfirmed(false);
-                    setRecord(null);
-                    if (record && !record.offline) toast('Recorded payments can be refunded from Refunds');
-                  }}>
+                  <Button size="sm" variant="outline" onClick={handleVoid}>
                     Void
                   </Button>
                   <Button size="sm" variant="dark" full onClick={printReceipt}>
@@ -300,7 +359,7 @@ export function ManualPayment() {
                   </Button>
                 </div>
                 <div className="mt-2 flex gap-2">
-                  <Button size="sm" variant="outline" full onClick={() => toast.success('Receipt emailed')}>
+                  <Button size="sm" variant="outline" full onClick={handleEmailReceipt}>
                     Email receipt
                   </Button>
                 </div>

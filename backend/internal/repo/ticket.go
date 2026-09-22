@@ -33,6 +33,11 @@ func (r *TicketRepo) List(ctx context.Context, station, status string) ([]model.
 		query += ` AND t.status = $` + itoa(argIdx)
 		args = append(args, status)
 		argIdx++
+	} else {
+		// No explicit filter: hide terminal tickets. A ticket marked 'served'
+		// (Completed on the KDS) drops off the board and never reappears on
+		// a poll.
+		query += ` AND t.status <> 'served'`
 	}
 
 	query += ` ORDER BY t.created_at ASC`

@@ -165,9 +165,6 @@ export function SystemHealth() {
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            <Button size="sm" variant="outline">
-              Details
-            </Button>
           </div>
         ))}
       </div>
@@ -189,7 +186,7 @@ export function SystemHealth() {
         }
       >
         <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-meta">
+          <p className="text-xs font-semibold text-meta">
             Last seen
           </p>
           <p className="mt-1 font-mono text-sm text-ink">{meta?.lastSeen ?? '—'}</p>
@@ -197,7 +194,7 @@ export function SystemHealth() {
 
         {meta && (
           <div className="mt-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-meta">
+            <p className="mb-2 text-xs font-semibold text-meta">
               Affected features
             </p>
             <div className="space-y-2">

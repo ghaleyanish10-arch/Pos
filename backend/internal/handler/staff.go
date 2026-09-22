@@ -121,9 +121,35 @@ func (h *StaffHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.Update(c.Request.Context(), c.Param("id"), req.Name, req.Role); err != nil {
+	req.Name = strings.TrimSpace(req.Name)
+	req.Role = strings.TrimSpace(req.Role)
+	if req.Name == "" && req.Role == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name or role is required"})
+		return
+	}
+	if req.Role != "" && !allowedStaffRoles[req.Role] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported role — pick Cashier, Store Manager, Inventory Auditor or Corporate Admin"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	current, err := h.repo.Get(ctx, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "staff member not found"})
+		return
+	}
+
+	if err := h.repo.Update(ctx, c.Param("id"), req.Name, req.Role); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Keep the PIN login (users row) in sync so the change of role actually
+	// takes effect on the next log-in, not just in the roster.
+	if h.userRepo != nil {
+		if serr := h.userRepo.SyncStaffByName(ctx, current.Name, req.Name, req.Role); serr != nil {
+			ginLog("staff role sync failed: " + serr.Error())
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "staff updated"})

@@ -130,11 +130,17 @@ func (r *ElevationRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 // RegisterFailure increments the failed-attempt counter and returns the new
 // count plus the (possibly refreshed) lockout expiry.
 func (r *ElevationRepo) RegisterFailure(ctx context.Context, userID string, threshold int, cooldown time.Duration) (attempts int, lockedUntil *time.Time, err error) {
+	// The lock starts on the crossing attempt and is NOT re-extended by
+	// further wrong attempts inside the window — otherwise a mashing toddler
+	// (or repeated tests) pins the account shut forever. Failures during the
+	// window still count and are still audited; the cooldown always ends.
 	err = r.db.QueryRow(ctx,
 		`UPDATE users
 		 SET pin_failed_attempts = pin_failed_attempts + 1,
 		     pin_locked_until = CASE
-		         WHEN pin_failed_attempts + 1 >= $2 THEN now() + $3::interval
+		         WHEN pin_failed_attempts + 1 >= $2
+		              AND (pin_locked_until IS NULL OR pin_locked_until < now())
+		             THEN now() + $3::interval
 		         ELSE pin_locked_until
 		     END
 		 WHERE id = $1

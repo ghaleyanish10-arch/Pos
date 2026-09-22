@@ -229,7 +229,7 @@ export function Loyalty() {
         }>
         <div className="space-y-5">
           <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+            <p className="mb-2 text-caption font-semibold text-meta">
               Search guest
             </p>
             <SearchInput
@@ -258,7 +258,7 @@ export function Loyalty() {
 
           {selectedGuest && (
             <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="text-caption font-semibold text-meta">
                 Current balance
               </p>
               <p className="mt-1 font-mono text-2xl font-extrabold text-ink">
@@ -269,7 +269,7 @@ export function Loyalty() {
 
           <div>
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="text-caption font-semibold text-meta">
                 Based on last purchase
               </p>
               <Toggle
@@ -288,13 +288,13 @@ export function Loyalty() {
               </Field>
             ) : selectedGuest && (
               <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <p className="text-caption font-semibold text-meta">
                   Last purchase
                 </p>
                 <p className="mt-0.5 text-sm font-semibold text-ink">
                   Rs {selectedGuest.lastPurchase.toLocaleString('en-IN')}
                 </p>
-                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <p className="mt-1 text-caption font-semibold text-meta">
                   Auto-computed points
                 </p>
                 <p className="mt-0.5 font-mono text-lg font-extrabold text-ink">
@@ -314,7 +314,7 @@ export function Loyalty() {
 
           {selectedGuest && computedPoints > 0 && (
             <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="text-caption font-semibold text-meta">
                 New balance preview
               </p>
               <p className="mt-1 font-mono text-2xl font-extrabold text-status-green">

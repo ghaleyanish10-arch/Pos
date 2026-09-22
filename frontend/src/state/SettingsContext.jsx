@@ -14,7 +14,16 @@ export const DEFAULT_SETTINGS = {
   serviceCharge: 10,
   opening: '08:00',
   closing: '22:00',
-  vatNo: '601234567'
+  vatNo: '601234567',
+  // Operations / Receipts / Kitchen — consumed across pages, persisted locally.
+  receiptFooter: 'Thank you for dining with us!',
+  receiptThanks: '',
+  printKotOnCharge: true,
+  autoPrintReceipts: true,
+  kitchenSla: 15,
+  kitchenSound: true,
+  kitchenAutoFire: false,
+  onlineStoreUrl: 'thamelhouse.order.np'
 };
 
 const SettingsContext = createContext(null);
@@ -33,8 +42,23 @@ const readStorefront = () => {
 };
 
 export function SettingsProvider({ children }) {
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mesa_ops_settings');
+      return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
+  });
   const [storefront, setStorefrontState] = useState(readStorefront);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mesa_ops_settings', JSON.stringify(settings));
+    } catch {
+      /* storage full/blocked — context state still works this session */
+    }
+  }, [settings]);
 
   useEffect(() => {
     localStorage.setItem(STOREFRONT_KEY, JSON.stringify(storefront));
@@ -97,6 +121,11 @@ export function SettingsProvider({ children }) {
         delivery_zones: []
       }
     }).catch(() => {});
+    try {
+      localStorage.removeItem('mesa_ops_settings');
+    } catch {
+      /* ignore */
+    }
   };
 
   return (

@@ -1,20 +1,28 @@
 package middleware
 
 import (
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// RequireEmailVerified gates admin-dashboard routes behind email verification
-// for Corporate Admin (business-owner) accounts only. Staff roles created by
-// the owner within the app have no inbox of their own, so the block is
-// role-scoped: it can never lock out a POS terminal or a manager session.
-// Unverified owners get a 403 with a code the frontend can turn into the
-// "verify your email" interstitial.
+// VERIFICATION_DISABLED is a local/demo kill switch for email verification.
+// It is OFF in production intent: Corporate Admin (owner) accounts must have
+// a verified email before the admin dashboard opens. Staff roles were never
+// gated and remain untouched.
+const VERIFICATION_DISABLED = false
+
+// RequireEmailVerified gates admin-dashboard routes behind a verified email
+// for Corporate Admin (owner) accounts. While VERIFICATION_DISABLED is true
+// this passes everyone through untouched so signup lands directly in the
+// dashboard; staff roles were never gated anyway.
 func RequireEmailVerified(db *pgxpool.Pool) gin.HandlerFunc {
+	_ = db // kept for the real gate; see VERIFICATION_DISABLED above
 	return func(c *gin.Context) {
+		if VERIFICATION_DISABLED {
+			c.Next()
+			return
+		}
+
 		if role := c.GetString("role"); role != "Corporate Admin" {
 			c.Next()
 			return
@@ -26,7 +34,7 @@ func RequireEmailVerified(db *pgxpool.Pool) gin.HandlerFunc {
 			c.GetString("user_id"),
 		).Scan(&verified)
 		if err != nil || !verified {
-			c.JSON(http.StatusForbidden, gin.H{
+			c.JSON(403, gin.H{
 				"error": "your email is not verified — check your inbox for the verification code",
 				"code":  "EMAIL_NOT_VERIFIED",
 			})

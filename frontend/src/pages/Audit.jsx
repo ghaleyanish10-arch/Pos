@@ -66,12 +66,23 @@ export function Audit() {
               const open = expanded === e.time;
               return (
                 <React.Fragment key={e.time}>
-                  <Tr onClick={() => setExpanded(open ? null : e.time)}>
+                  <Tr
+                          onClick={() => setExpanded(open ? null : e.time)}
+                          onKeyDown={(ev) => {
+                            if (ev.key === 'Enter' || ev.key === ' ') {
+                              ev.preventDefault();
+                              setExpanded(open ? null : e.time);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={open}
+                          className="cursor-pointer">
                     <Td className="whitespace-nowrap font-mono text-sm text-meta">{e.time}</Td>
                     <Td>
                       <span className="flex items-center gap-2">
                         <span className="text-sm font-semibold">{e.actor}</span>
-                        <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] font-semibold text-meta">
+                        <span className="rounded-full bg-canvas px-2 py-0.5 text-caption font-semibold text-meta">
                           {e.role}
                         </span>
                       </span>
@@ -81,7 +92,7 @@ export function Audit() {
                         {e.type}
                       </Pill>
                     </Td>
-                    <Td className="text-sm">{e.summary}</Td>
+                    <Td className="break-words text-sm">{e.summary}</Td>
                     <Td className="text-right">
                       <ChevronDownIcon
                         className={`ml-auto h-4 w-4 text-meta transition-transform duration-150 ease-soft ${open ? 'rotate-180' : ''}`}
@@ -93,13 +104,13 @@ export function Audit() {
                       <Td colSpan={5} className="px-4 py-4">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div className="rounded-xl border border-line bg-surface p-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                            <p className="text-caption font-semibold text-meta">
                               Before
                             </p>
                             <p className="mt-1.5 font-mono text-sm text-ink">{e.before}</p>
                           </div>
                           <div className="rounded-xl border border-line bg-surface p-4">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                            <p className="text-caption font-semibold text-meta">
                               After
                             </p>
                             <p className="mt-1.5 font-mono text-sm text-ink">{e.after}</p>

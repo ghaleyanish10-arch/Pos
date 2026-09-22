@@ -19,7 +19,7 @@ func (r *StaffRepo) List(ctx context.Context, branchID string) ([]model.StaffMem
 	query := `SELECT id, name, role, branch_id::text FROM staff_members WHERE 1=1`
 	args := []interface{}{}
 	if branchID != "" {
-		query += ` WHERE branch_id = $1`
+		query += ` AND branch_id = $1`
 		args = append(args, branchID)
 	}
 	query += ` ORDER BY name`
@@ -47,6 +47,18 @@ func (r *StaffRepo) Create(ctx context.Context, m *model.StaffMember) error {
 		m.Name, m.Role, m.BranchID,
 	).Scan(&m.ID)
 	return err
+}
+
+// Get returns one staff member; pgx.ErrNoRows when the id is unknown.
+func (r *StaffRepo) Get(ctx context.Context, id string) (*model.StaffMember, error) {
+	var m model.StaffMember
+	err := r.db.QueryRow(ctx,
+		`SELECT id, name, role, branch_id::text FROM staff_members WHERE id = $1`, id,
+	).Scan(&m.ID, &m.Name, &m.Role, &m.BranchID)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 func (r *StaffRepo) Update(ctx context.Context, id, name, role string) error {

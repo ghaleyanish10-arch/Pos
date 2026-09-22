@@ -39,6 +39,15 @@ type UpdatePORequest struct {
 	Status string `json:"status"`
 }
 
+// ReceivePORequestItem is one line of the receiving confirmation: how much of
+// an ingredient actually arrived. Omitted lines default to fully received.
+type ReceivePORequestItem struct {
+	Ingredient string  `json:"ingredient"`
+	Qty        float64 `json:"qty"`
+}
+
+// ReceivePORequest carries the per-line received quantities. An empty or
+// absent received_items array means "receive everything on the PO".
 type ReceivePORequest struct {
-	ReceivedItems []string `json:"received_items"`
+	ReceivedItems []ReceivePORequestItem `json:"received_items"`
 }

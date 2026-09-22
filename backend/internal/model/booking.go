@@ -11,6 +11,13 @@ type FloorTable struct {
 	State    string  `json:"state"`
 	Detail   string  `json:"detail"`
 	BranchID *string `json:"branch_id"`
+
+	// Live order info derived from the newest open order on this table.
+	// Empty/zero when the table has no open order (omitempty keeps the JSON
+	// clean for vacant tables).
+	OrderID    *string `json:"order_id,omitempty"`
+	OrderTotal float64 `json:"order_total,omitempty"`
+	ItemCount  int     `json:"item_count,omitempty"`
 }
 
 type Reservation struct {

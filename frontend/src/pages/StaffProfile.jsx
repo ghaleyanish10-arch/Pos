@@ -86,7 +86,7 @@ export function StaffProfile() {
         Back to team
       </Link>
 
-      <PageHeader title={person.name} descriptor={`${person.role} · ${person.id}`}>
+      <PageHeader title={person.name} descriptor={person.role}>
         <Pill tone={roleTone[person.role]} dot>
           {person.role}
         </Pill>
@@ -103,23 +103,27 @@ export function StaffProfile() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-base font-extrabold text-ink">{person.name}</p>
-              <p className="font-mono text-xs text-meta">{person.id}</p>
-              <p className="mt-1 text-xs text-meta">{person.joined ? `Joined ${person.joined} · ` : ''}Payroll group A</p>
+              <p className="text-xs text-meta">
+                {person.email || person.phone
+                  ? `${[person.email, person.phone].filter(Boolean).join(' · ')}`
+                  : person.role}
+              </p>
+              {person.joined && <p className="mt-0.5 text-xs text-meta">Joined {person.joined}</p>}
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-card border border-line bg-surface p-4 text-center">
               <p className="font-mono text-2xl font-extrabold text-ink">{personShifts.length}</p>
-              <p className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-meta">Shifts / week</p>
+              <p className="mt-1 text-caption font-semiboldst text-meta">Shifts / week</p>
             </div>
             <div className="rounded-card border border-line bg-surface p-4 text-center">
               <p className="font-mono text-2xl font-extrabold text-ink">{hoursWeek}h</p>
-              <p className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-meta">Hours / week</p>
+              <p className="mt-1 text-caption font-semiboldst text-meta">Hours / week</p>
             </div>
             <div className="rounded-card border border-line bg-surface p-4 text-center">
               <p className="font-mono text-2xl font-extrabold text-ink">{presentDays.length}</p>
-              <p className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-meta">Days present · yr</p>
+              <p className="mt-1 text-caption font-semiboldst text-meta">Days present · yr</p>
             </div>
           </div>
 
@@ -151,7 +155,7 @@ export function StaffProfile() {
             </div>
 
             <div className="mt-5 border-t border-line pt-4">
-              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="flex items-center gap-1.5 text-caption font-semibold text-meta">
                 <CalendarDaysIcon className="h-3.5 w-3.5" />
                 This week
               </p>
@@ -185,11 +189,11 @@ export function StaffProfile() {
                     <p className="truncate text-sm font-semibold text-ink">
                       {d.date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
                     </p>
-                    <p className="font-mono text-[11px] text-meta">
+                    <p className="font-mono text-caption text-meta">
                       {d.clockIn}–{d.clockOut} · {d.hours}h
                     </p>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${statusTone[d.level]}`}>
+                  <span className={`shrink-0 rounded-full px-2 py-1 text-caption font-semibold ${statusTone[d.level]}`}>
                     {d.status}
                   </span>
                 </div>

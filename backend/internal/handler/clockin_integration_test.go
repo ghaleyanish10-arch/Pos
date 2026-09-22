@@ -101,7 +101,7 @@ func clockIn(t *testing.T, r *gin.Engine, userID, pin string) (int, string) {
 func TestRosterReturnsNoPINMaterial(t *testing.T) {
 	r, _ := newClockInRouter(t, 12*time.Hour)
 	adminToken := loginBoss(t, r)
-	registerAndLogin(t, r, adminToken, "Kitchen Kiran", "kiran@test.dev", "password123", "Kitchen")
+	registerAndLogin(t, r, adminToken, "Auditor Kiran", "kiran@test.dev", "password123", "Inventory Auditor")
 	registerAndLogin(t, r, adminToken, "Cashier Mina", "mina@test.dev", "password123", "Cashier")
 	mgrID, _ := newManager(t, r, "Approver Ana", "approver@test.dev")
 
@@ -142,7 +142,7 @@ func TestRosterReturnsNoPINMaterial(t *testing.T) {
 		t.Fatalf("decode roster: %v", err)
 	}
 
-	expected := map[string]bool{"Mesa Admin": false, "Kitchen Kiran": false, "Cashier Mina": false}
+	expected := map[string]bool{"Mesa Admin": false, "Auditor Kiran": false, "Cashier Mina": false}
 	for _, u := range resp.Data {
 		if _, ok := expected[u.Name]; ok {
 			expected[u.Name] = true
@@ -162,7 +162,7 @@ func TestClockInCorrectAndWrongPIN(t *testing.T) {
 	r, pool := newClockInRouter(t, 12*time.Hour)
 	adminToken := loginBoss(t, r)
 
-	registerAndLogin(t, r, adminToken, "Kitchen Kiran", "kiran@test.dev", "password123", "Kitchen")
+	registerAndLogin(t, r, adminToken, "Auditor Kiran", "kiran@test.dev", "password123", "Inventory Auditor")
 	kiranID := uid("kiran@test.dev")
 	setPINFor(t, r, adminToken, kiranID, "7417", "admin123")
 	mgrID, _ := newManager(t, r, "Approver Ana", "approver@test.dev")
@@ -187,7 +187,7 @@ func TestClockInCorrectAndWrongPIN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session token failed validation: %v", err)
 	}
-	if claims.UserID != kiranID || claims.Role != "Kitchen" {
+	if claims.UserID != kiranID || claims.Role != "Inventory Auditor" {
 		t.Fatalf("session claims wrong: user=%s role=%s", claims.UserID, claims.Role)
 	}
 
@@ -260,7 +260,7 @@ func TestClockInSessionExpiresAfterShiftTTL(t *testing.T) {
 	r, _ := newClockInRouter(t, 600*time.Millisecond)
 	adminToken := loginBoss(t, r)
 
-	registerAndLogin(t, r, adminToken, "Shift Cook", "shift@test.dev", "password123", "Kitchen")
+	registerAndLogin(t, r, adminToken, "Shift Cook", "shift@test.dev", "password123", "Inventory Auditor")
 	cookID := uid("shift@test.dev")
 	setPINFor(t, r, adminToken, cookID, "7417", "admin123")
 	mgrID, _ := newManager(t, r, "Approver Ana", "approver@test.dev")

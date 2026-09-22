@@ -33,9 +33,13 @@ export function RegisterCustomer() {
   const isPreview = params.has('device');
   const framed = DEVICES.find((d) => d.key === device)?.width || null;
   const { addTicket } = useOrders();
-  const { occupyTable, markOrdered } = useTables();
+  const { occupyTable, markOrdered, setTableOrder } = useTables();
   const { campaignList } = useCampaigns();
-  const campaign = campaignList.find((c) => c.status === 'Scheduled') || DEMO_CAMPAIGN;
+  // Real customers only see campaigns that are actually scheduled on the
+  // server. DEMO_CAMPAIGN is a staff preview aid — it never stands in for a
+  // real campaign in front of a paying guest.
+  const realCampaign = campaignList.find((c) => c.status === 'Scheduled');
+  const campaign = isPreview ? realCampaign || DEMO_CAMPAIGN : realCampaign;
   const toast = useToast();
   const seatedRef = useRef(false);
 
@@ -52,8 +56,11 @@ export function RegisterCustomer() {
     const tableLabel = meta.table || table || '';
     // Persist to the backend so the order shows up in staff Orders/KDS as an
     // incoming ticket (customers have no session, hence the public endpoint).
+    let sent = false;
+    let rejected = null;
+    let created = null;
     try {
-      await api('/public/orders', {
+      created = await api('/public/orders', {
         method: 'POST',
         body: {
           type: tableLabel ? 'dine-in' : 'takeaway',
@@ -66,29 +73,65 @@ export function RegisterCustomer() {
           }))
         }
       });
-    } catch {
-      // Offline / backend hiccup: still keep the order on this device's
-      // ticket board so the kitchen has a record either way.
+      sent = true;
+    } catch (err) {
+      if (err && typeof err.status === 'number') {
+        // The server actively rejected the order — do not claim it was sent.
+        rejected = err.body?.error || err.message || 'the server rejected the order';
+      }
     }
-    if (tableLabel) markOrdered(tableLabel);
-    addTicket({
-      id: undefined, // OrderContext assigns the next ticket id
-      type: tableLabel ? 'dine-in' : 'takeaway',
-      tag: tableLabel ? `Table ${tableLabel}` : 'Online · customer',
-      items: lines.map((l) => `${l.qty}× ${l.name}`),
-      elapsed: '0 min',
-      station: 'Kitchen',
-      payment: tableLabel ? 'Bill to table' : 'Pay on pickup',
-      server: 'Customer',
-      table: tableLabel || '—',
-      notes: tableLabel ? `Placed from Table ${tableLabel} QR` : 'Placed from the customer register'
-    });
-    toast(
-      tableLabel
-        ? `Order sent for Table ${tableLabel} · ${lines.length} item${lines.length === 1 ? '' : 's'}`
-        : `Order sent to the store · ${lines.length} item${lines.length === 1 ? '' : 's'}`,
-      { tone: 'green' }
-    );
+    if (tableLabel && sent) {
+      // Only refresh the floor when the server actually accepted the order —
+      // a rejected order must not seat the table or fake a check.
+      markOrdered(tableLabel);
+      setTableOrder(tableLabel, {
+        ref: created?.id ? `#${String(created.id).slice(0, 5).toUpperCase()}` : ''
+      });
+    }
+    if (sent) {
+      addTicket({
+        id: undefined, // OrderContext assigns the next ticket id
+        type: tableLabel ? 'dine-in' : 'takeaway',
+        tag: tableLabel ? `Table ${tableLabel}` : 'Online · customer',
+        items: lines.map((l) => `${l.qty}× ${l.name}`),
+        elapsed: '0 min',
+        station: 'Kitchen',
+        payment: tableLabel ? 'Bill to table' : 'Pay on pickup',
+        server: 'Customer',
+        table: tableLabel || '—',
+        notes: tableLabel ? `Placed from Table ${tableLabel} QR` : 'Placed from the customer register'
+      });
+      toast(
+        tableLabel
+          ? `Order sent for Table ${tableLabel} · ${lines.length} item${lines.length === 1 ? '' : 's'}`
+          : `Order sent to the store · ${lines.length} item${lines.length === 1 ? '' : 's'}`,
+        { tone: 'green' }
+      );
+    } else if (rejected) {
+      // Kept locally so the guest still has a record, but the kitchen was
+      // not notified and the store never received it — say exactly that.
+      toast(`Order could not be sent: ${rejected}`, { tone: 'red' });
+    } else {
+      // Network failure — the order lives on this device's ticket board.
+      addTicket({
+        id: undefined,
+        type: tableLabel ? 'dine-in' : 'takeaway',
+        tag: tableLabel ? `Table ${tableLabel}` : 'Online · customer',
+        items: lines.map((l) => `${l.qty}× ${l.name}`),
+        elapsed: '0 min',
+        station: 'Kitchen',
+        payment: tableLabel ? 'Bill to table' : 'Pay on pickup',
+        server: 'Customer',
+        table: tableLabel || '—',
+        notes: tableLabel ? `Kept on this device — store server unreachable` : 'Kept on this device — store server unreachable'
+      });
+      toast(
+        tableLabel
+          ? `Store server unreachable — order kept on this device for Table ${tableLabel}`
+          : `Store server unreachable — order kept on this device`,
+        { tone: 'amber' }
+      );
+    }
   };
 
   return (

@@ -34,7 +34,7 @@ function TrendTip({ active, payload, label: seriesLabel, formatValue, formatTitl
   const value = payload[0]?.value;
   return (
     <div className="rounded-xl border border-line bg-surface px-4 py-3 shadow-pop">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">{formatTitle(row)}</p>
+      <p className="text-caption font-semibold text-meta">{formatTitle(row)}</p>
       <p className="mt-1 font-mono text-lg font-extrabold text-ink">{formatValue(value)}</p>
       {seriesLabel && <p className="mt-0.5 text-xs text-meta">{seriesLabel}</p>}
     </div>

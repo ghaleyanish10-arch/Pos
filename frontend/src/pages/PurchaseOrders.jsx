@@ -6,7 +6,7 @@ import { Pill } from '../components/ui/Pill';
 import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
 import { Drawer } from '../components/ui/Drawer';
 import { useToast } from '../components/ui/Toast';
-import { poLineItems, purchaseOrders, suppliers } from '../data/ims';
+import { suppliers } from '../data/ims';
 import api from '../api/client';
 
 const statusTone = {
@@ -25,12 +25,13 @@ const defaultNewLines = [
 const fromPo = (po) => ({
   id: po.id || '',
   supplier: po.supplier || '',
-  items: Array.isArray(po.items) ? po.items.length : 0,
+  count: Array.isArray(po.items) ? po.items.length : 0,
   total: `Rs ${Number(po.total || 0).toLocaleString('en-IN')}`,
   expected: po.expected_date
     ? new Date(po.expected_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
     : '—',
-  status: po.status || 'Draft'
+  status: po.status || 'Draft',
+  raw: po
 });
 
 const toApiPoLine = (l) => ({
@@ -43,10 +44,10 @@ export function PurchaseOrders() {
   const toast = useToast();
   const [tab, setTab] = useState('All');
   const [building, setBuilding] = useState(false);
-  const [poList, setPoList] = useState(purchaseOrders);
+  const [poList, setPoList] = useState([]);
   const [newSupplier, setNewSupplier] = useState('Everest Meats');
+  const [newDate, setNewDate] = useState('2026-09-14');
   const [newLines, setNewLines] = useState(defaultNewLines.map((l) => ({ ...l })));
-  const [nextId, setNextId] = useState(415);
   const [receivePo, setReceivePo] = useState(null);
   const [receiveLines, setReceiveLines] = useState([]);
 
@@ -57,9 +58,10 @@ export function PurchaseOrders() {
         const res = await api('/purchase-orders');
         if (cancelled) return;
         const data = res?.data || [];
-        if (data.length > 0) setPoList(data.map(fromPo));
+        // Honest board: whatever the server returns — including an empty list.
+        setPoList(data.map(fromPo));
       } catch {
-        // keep static demo data as fallback
+        if (!cancelled) setPoList([]);
       }
     })();
     return () => { cancelled = true; };
@@ -83,46 +85,82 @@ export function PurchaseOrders() {
     setNewLines((prev) => [...prev, { item: '', qty: 0, unit: 'kg', unitCost: 0, expected: 0, received: 0 }]);
   };
 
-  const handleSaveDraft = () => {
-    const id = `PO-${String(nextId).padStart(4, '0')}`;
-    const itemCount = newLines.length;
-    const totalStr = `Rs ${total.toLocaleString('en-IN')}`;
-    setPoList((prev) => [...prev, { id, supplier: newSupplier, items: itemCount, total: totalStr, expected: '—', status: 'Draft' }]);
-    setNextId((n) => n + 1);
+  const resetBuilder = () => {
     setBuilding(false);
     setNewLines(defaultNewLines.map((l) => ({ ...l })));
-    toast.success('Draft saved');
-    api('/purchase-orders', {
-      method: 'POST',
-      body: { supplier: newSupplier, expected_date: '', items: newLines.map(toApiPoLine) }
-    }).catch(() => {});
+    setNewSupplier('Everest Meats');
+    setNewDate('2026-09-14');
   };
 
-  const handleSendToSupplier = () => {
-    const id = `PO-${String(nextId).padStart(4, '0')}`;
-    const itemCount = newLines.length;
-    const totalStr = `Rs ${total.toLocaleString('en-IN')}`;
-    const expected = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-    setPoList((prev) => [...prev, { id, supplier: newSupplier, items: itemCount, total: totalStr, expected, status: 'Sent' }]);
-    setNextId((n) => n + 1);
-    setBuilding(false);
-    setNewLines(defaultNewLines.map((l) => ({ ...l })));
-    toast.success(`PO sent to ${newSupplier}`);
-    api('/purchase-orders', {
-      method: 'POST',
-      body: { supplier: newSupplier, expected_date: '', items: newLines.map(toApiPoLine) }
-    })
-      .then((created) => {
-        if (created?.id) api(`/purchase-orders/${created.id}`, { method: 'PUT', body: { status: 'Sent' } }).catch(() => {});
-      })
-      .catch(() => {});
+  const handleSaveDraft = async () => {
+    const expected = newDate ? new Date(newDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—';
+    try {
+      const created = await api('/purchase-orders', {
+        method: 'POST',
+        body: { supplier: newSupplier, expected_date: newDate, items: newLines.map(toApiPoLine) }
+      });
+      setPoList((prev) => [{
+        id: created.id,
+        supplier: newSupplier,
+        count: newLines.length,
+        total: `Rs ${total.toLocaleString('en-IN')}`,
+        expected,
+        status: created.status || 'Draft',
+        raw: { ...created, items: newLines.map(toApiPoLine) }
+      }, ...prev]);
+      resetBuilder();
+      toast.success('Draft saved');
+    } catch (err) {
+      toast.error(`Draft not saved: ${err?.body?.error || err?.message || 'server rejected the PO'}`);
+    }
+  };
+
+  const handleSendToSupplier = async () => {
+    const expected = newDate
+      ? new Date(newDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+      : new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+    try {
+      const created = await api('/purchase-orders', {
+        method: 'POST',
+        body: { supplier: newSupplier, expected_date: newDate, items: newLines.map(toApiPoLine) }
+      });
+      // The server has no separate "send" action, so a sent PO is a persisted
+      // PO whose status we move to Sent — awaited so we never claim success
+      // before the server agrees.
+      await api(`/purchase-orders/${created.id}`, { method: 'PUT', body: { status: 'Sent' } });
+      setPoList((prev) => [{
+        id: created.id,
+        supplier: newSupplier,
+        count: newLines.length,
+        total: `Rs ${total.toLocaleString('en-IN')}`,
+        expected,
+        status: 'Sent',
+        raw: { ...created, items: newLines.map(toApiPoLine) }
+      }, ...prev]);
+      resetBuilder();
+      toast.success(`PO sent to ${newSupplier}`);
+    } catch (err) {
+      toast.error(`PO not sent: ${err?.body?.error || err?.message || 'server rejected the PO'}`);
+    }
   };
 
   const openReceive = (po) => {
-    const src = Array.isArray(po.items) && po.items.length > 0
-      ? po.items.map((it) => ({ item: it.ingredient || '', qty: Number(it.qty) || 0, unitCost: Number(it.unit_cost) || 0, unit: '' }))
-      : poLineItems;
-    const lines = src.map((l) => ({ ...l, expected: l.qty, received: l.qty }));
+    const items = po?.raw?.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      toast.error('Cannot receive: line items are missing for this PO');
+      return;
+    }
+    const lines = items.map((it) => ({
+      item: it.ingredient || it.name || '',
+      qty: Number(it.qty) || 0,
+      expected: Number(it.qty) || 0,
+      received: Number(it.qty) || 0,
+      unit: ''
+    }));
+    if (lines.some((l) => !l.item)) {
+      toast.error('Cannot receive: a line item has no ingredient name');
+      return;
+    }
     setReceivePo(po);
     setReceiveLines(lines);
   };
@@ -137,33 +175,41 @@ export function PurchaseOrders() {
   const receiveExpected = receiveLines.reduce((s, l) => s + l.expected, 0);
   const hasDiscrepancy = receiveLines.some((l) => l.received !== l.expected);
 
-  const markFullyReceived = () => {
+  const applyReceiveResponse = (res, poId) => {
+    const serverPo = res?.po;
+    if (!serverPo) return null;
     setPoList((prev) =>
-      prev.map((p) =>
-        p.id === receivePo.id ? { ...p, status: 'Received' } : p
-      )
+      prev.map((p) => (p.id === poId ? { ...p, status: serverPo.status || 'Received', raw: serverPo } : p))
     );
-    setReceivePo(null);
-    toast.success('PO fully received');
-    if (receivePo?.id) {
-      api(`/purchase-orders/${receivePo.id}/receive`, { method: 'PUT' }).catch(() => {});
+    return serverPo;
+  };
+
+  const markFullyReceived = async () => {
+    try {
+      const res = await api(`/purchase-orders/${receivePo.id}/receive`, {
+        method: 'PUT',
+        body: { received_items: receiveLines.map((l) => ({ ingredient: l.item, qty: l.expected })) }
+      });
+      applyReceiveResponse(res, receivePo.id);
+      setReceivePo(null);
+      toast.success(res?.message || 'PO fully received');
+    } catch (err) {
+      toast.error(`Receive failed: ${err?.body?.error || err?.message || 'server rejected the receive'}`);
     }
   };
 
-  const savePartial = () => {
+  const savePartial = async () => {
     const allMatch = receiveLines.every((l) => l.received === l.expected);
-    setPoList((prev) =>
-      prev.map((p) =>
-        p.id === receivePo.id
-          ? { ...p, status: allMatch ? 'Received' : 'Partially Received' }
-          : p
-      )
-    );
-    const receivedUnits = receiveTotal;
-    setReceivePo(null);
-    toast.success(`Partial receive saved · ${receivedUnits} units added to inventory`);
-    if (receivePo?.id) {
-      api(`/purchase-orders/${receivePo.id}`, { method: 'PUT', body: { status: allMatch ? 'Received' : 'Partially Received' } }).catch(() => {});
+    try {
+      const res = await api(`/purchase-orders/${receivePo.id}/receive`, {
+        method: 'PUT',
+        body: { received_items: receiveLines.map((l) => ({ ingredient: l.item, qty: l.received })) }
+      });
+      applyReceiveResponse(res, receivePo.id);
+      setReceivePo(null);
+      toast.success(res?.message || (allMatch ? 'PO fully received' : 'Partial receive saved'));
+    } catch (err) {
+      toast.error(`Receive failed: ${err?.body?.error || err?.message || 'server rejected the receive'}`);
     }
   };
 
@@ -182,7 +228,7 @@ export function PurchaseOrders() {
         <Card className="mx-auto max-w-[820px]">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
             <div>
-              <h2 className="text-lg font-extrabold text-ink">PO-{String(nextId).padStart(4, '0')}</h2>
+              <h2 className="text-lg font-extrabold text-ink">New purchase order</h2>
               <p className="text-sm text-meta">Create a new purchase order</p>
             </div>
             <div className="flex gap-2">
@@ -193,23 +239,23 @@ export function PurchaseOrders() {
               >
                 {suppliers.map((s) => <option key={s}>{s}</option>)}
               </select>
-              <input className={`${inputClass} w-auto`} type="date" defaultValue="2026-09-14" />
+              <input className={`${inputClass} w-auto`} type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} aria-label="Expected delivery date" />
             </div>
           </div>
 
           <table className="mt-4 w-full text-sm">
             <thead>
               <tr className="border-b border-line">
-                <th className="py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <th className="py-2 text-left text-caption font-semibold text-meta">
                   Item
                 </th>
-                <th className="py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <th className="py-2 text-right text-caption font-semibold text-meta">
                   Quantity
                 </th>
-                <th className="py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <th className="py-2 text-right text-caption font-semibold text-meta">
                   Unit cost
                 </th>
-                <th className="py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <th className="py-2 text-right text-caption font-semibold text-meta">
                   Subtotal
                 </th>
               </tr>
@@ -304,7 +350,7 @@ export function PurchaseOrders() {
                   <Tr key={po.id}>
                     <Td className="font-mono text-sm font-semibold">{po.id}</Td>
                     <Td className="text-sm">{po.supplier}</Td>
-                    <Td className="font-mono text-sm">{po.items}</Td>
+                    <Td className="font-mono text-sm">{po.count}</Td>
                     <Td className="text-right font-mono text-sm font-bold">{po.total}</Td>
                     <Td className="text-sm text-meta">{po.expected}</Td>
                     <Td>
@@ -316,15 +362,9 @@ export function PurchaseOrders() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          if (po.status === 'Sent' || po.status === 'Partially Received') {
-                            openReceive(po);
-                          }
-                        }}
+                        onClick={() => openReceive(po)}
                       >
-                        {po.status === 'Sent' || po.status === 'Partially Received' ?
-                          'Receive' :
-                          'Open'}
+                        {po.status === 'Received' ? 'Open' : 'Receive'}
                       </Button>
                     </Td>
                   </Tr>
@@ -368,7 +408,7 @@ export function PurchaseOrders() {
                 </div>
                 <p className="mt-1 text-xs text-meta">Expected: {l.expected} {l.unit}</p>
                 <div className="mt-2 flex items-center gap-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Received</span>
+                  <span className="text-caption font-semibold text-meta">Received</span>
                   <button
                     type="button"
                     onClick={() => updateReceiveLine(i, 'received', Math.max(0, l.received - 1))}
@@ -393,7 +433,7 @@ export function PurchaseOrders() {
 
         {hasDiscrepancy &&
           <div className="mt-4 rounded-xl border border-status-amber/30 bg-status-amber/5 p-3">
-            <p className="text-xs font-semibold text-amber-700">
+            <p className="text-xs font-semibold text-status-amber">
               {receiveLines.filter((l) => l.received !== l.expected).length} item(s) have discrepancies
             </p>
           </div>

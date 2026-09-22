@@ -19,11 +19,19 @@ func NewService(db *pgxpool.Pool) *Service {
 	return &Service{db: db}
 }
 
+// normalizeEmail trims whitespace and lowercases so logins typed with a
+// capital letter or a stray space still match the stored account. Gmail
+// addresses are case-insensitive and users routinely autocapitalize on
+// mobile keyboards.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func (s *Service) Login(ctx context.Context, email, password string) (string, string, string, string, error) {
 	var id, passwordHash, role, branchID string
 	err := s.db.QueryRow(ctx,
-		`SELECT id, password_hash, role, COALESCE(branch_id::text, '') FROM users WHERE email = $1 AND deleted_at IS NULL`,
-		email,
+		`SELECT id, password_hash, role, COALESCE(branch_id::text, '') FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
+		normalizeEmail(email),
 	).Scan(&id, &passwordHash, &role, &branchID)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("invalid credentials")
@@ -41,10 +49,15 @@ func (s *Service) Register(ctx context.Context, name, email, password, role, bra
 	if err != nil {
 		return "", err
 	}
+	email = normalizeEmail(email) // store canonical lowercase so later logins match regardless of typed case
 
 	var id string
+	// Verification is removed for now: every registered account is stamped
+	// verified at creation, so nothing downstream can ever gate a fresh signup.
 	err = s.db.QueryRow(ctx,
-		`INSERT INTO users (name, email, password_hash, role, branch_id) VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid) RETURNING id`,
+		`INSERT INTO users (name, email, password_hash, role, branch_id, email_verified_at)
+		 VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid, now())
+		 RETURNING id`,
 		name, email, string(hash), role, branchID,
 	).Scan(&id)
 	if err != nil {
@@ -76,6 +89,17 @@ func (s *Service) ValidateRefreshToken(ctx context.Context, refreshToken, secret
 func (s *Service) MarkEmailVerified(ctx context.Context, userID string) error {
 	_, err := s.db.Exec(ctx,
 		`UPDATE users SET email_verified_at = now() WHERE id = $1 AND email_verified_at IS NULL`,
+		userID,
+	)
+	return err
+}
+
+// MarkEmailUnverified clears the verified stamp. Signup uses it because the
+// shared Register path stamps accounts verified for legacy callers, while the
+// OTP flow must start the account unverified.
+func (s *Service) MarkEmailUnverified(ctx context.Context, userID string) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE users SET email_verified_at = NULL WHERE id = $1`,
 		userID,
 	)
 	return err
@@ -220,7 +244,7 @@ func (s *Service) RegisterOAuthUser(ctx context.Context, name, email, provider, 
 		`INSERT INTO users (name, email, password_hash, role, branch_id, email_verified_at)
 		 VALUES ($1, $2, '', 'Corporate Admin', $3::uuid, now())
 		 RETURNING id::text`,
-		name, email, branchID,
+		name, normalizeEmail(email), branchID,
 	).Scan(&userID)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {

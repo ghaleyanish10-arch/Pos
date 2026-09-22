@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { soundEngine } from '../utils/sound';
 
 const NotificationContext = createContext(null);
 
@@ -12,6 +13,11 @@ export function NotificationProvider({ children }) {
       read: false,
       ...n
     }, ...prev]);
+    // Every bell notification gets its subtle tone unless the caller already
+    // made a more specific sound (order arrival, payment…) — the engine's
+    // priority lock suppresses the generic tone in that case, so a new order
+    // chimes once, not twice. Pass { silent: true } to opt out entirely.
+    if (!n?.silent) soundEngine.play(n?.tone === 'critical' ? 'critical' : 'notification');
   }, []);
 
   const dismiss = useCallback((id) => {

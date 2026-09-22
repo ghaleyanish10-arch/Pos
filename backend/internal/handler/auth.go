@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/mesa-os/backend/internal/auth"
 	"github.com/mesa-os/backend/internal/config"
 	"github.com/mesa-os/backend/internal/email"
+	"github.com/mesa-os/backend/internal/mailer"
 	"github.com/mesa-os/backend/internal/model"
 	"github.com/mesa-os/backend/internal/repo"
 )
@@ -18,6 +20,7 @@ type AuthHandler struct {
 	repo   *repo.UserRepo
 	config *config.Config
 	email  *email.Service
+	smtp   *mailer.Mailer
 }
 
 func NewAuthHandler(svc *auth.Service, r *repo.UserRepo, cfg *config.Config) *AuthHandler {
@@ -27,6 +30,20 @@ func NewAuthHandler(svc *auth.Service, r *repo.UserRepo, cfg *config.Config) *Au
 // SetEmail attaches the centralized email service (nil = email disabled and
 // endpoints respond honestly instead of pretending).
 func (h *AuthHandler) SetEmail(e *email.Service) { h.email = e }
+
+// SetSMTP attaches the Gmail SMTP mailer used for OTP verification codes.
+func (h *AuthHandler) SetSMTP(m *mailer.Mailer) { h.smtp = m }
+
+// Providers tells the landing page which sign-in options the server can
+// actually honor, so buttons for unconfigured flows never render. It exposes
+// no secrets — only booleans derived from env presence.
+func (h *AuthHandler) Providers(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"google":     h.config.GoogleClientID != "" && h.config.GoogleClientSecret != "",
+		"password":   true,
+		"email_ready": h.email != nil && h.email.Enabled(),
+	})
+}
 
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req model.LoginRequest
@@ -64,31 +81,44 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
-// sendVerificationCode issues a fresh 6-digit code and emails it. Returns
-// whether the email actually went out (false = email not configured, or the
+// sendVerificationCode issues a fresh 6-digit code and emails it. Delivery
+// prefers Gmail SMTP (explicit TLS with a 587 STARTTLS fallback); the Resend
+// service is the alternate path when SMTP is not configured. Returns whether
+// the email actually went out (false = neither transport configured, or the
 // send failed — the account is still created either way).
 func (h *AuthHandler) sendVerificationCode(c *gin.Context, userID, emailAddr, name string) bool {
-	if h.email == nil || !h.email.Enabled() {
-		return false
-	}
 	code, err := h.svc.IssueCode(c.Request.Context(), userID)
 	if err != nil {
 		ginLog("failed to issue verification code: " + err.Error())
 		return false
 	}
-	ctx, cancel := contextWithTimeout()
-	defer cancel()
-	if _, serr := h.email.SendVerificationCode(ctx, emailAddr, name, code); serr != nil {
-		ginLog("failed to send verification code: " + serr.Error())
-		return false
+
+	// Gmail SMTP first — the OTP flow's primary transport.
+	if h.smtp != nil && h.smtp.Configured() {
+		err := h.smtp.SendVerificationCode(emailAddr, name, code)
+		if err == nil {
+			return true
+		}
+		ginLog("smtp verification code send failed: " + err.Error())
+		// fall through to Resend before giving up
 	}
-	return true
+
+	if h.email != nil && h.email.Enabled() {
+		ctx, cancel := contextWithTimeout()
+		defer cancel()
+		if _, serr := h.email.SendVerificationCode(ctx, emailAddr, name, code); serr == nil {
+			return true
+		} else {
+			ginLog("failed to send verification code: " + serr.Error())
+		}
+	}
+	return false
 }
 
 // Signup is the public business-owner flow: a name, email and password create
 // a Corporate Admin (the existing top role) plus attach them to their branch
-// (the business/tenant). The account is then verified by a 6-digit code mailed
-// by Resend before the admin dashboard unlocks.
+// (the business/tenant). Email verification is removed for now, so the account
+// is created pre-verified and the owner lands straight on the dashboard.
 func (h *AuthHandler) Signup(c *gin.Context) {
 	var req model.SignupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -117,11 +147,53 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		_ = h.svc.SetBranch(c.Request.Context(), userID, branchID)
 	}
 
-	verificationSent := h.sendVerificationCode(c, userID, req.Email, req.Name)
+	// OTP email verification: the account is created UNVERIFIED (the Register
+	// path stamps verified only for legacy callers), a 6-digit code is emailed
+	// via Gmail SMTP, and the dashboard opens after the code is entered.
+	if verr := h.svc.MarkEmailUnverified(c.Request.Context(), userID); verr != nil {
+		ginLog("failed to clear verified flag on signup: " + verr.Error())
+	}
+	sent := h.sendVerificationCode(c, userID, req.Email, req.Name)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":               "account created — check your email for the 6-digit verification code",
-		"email_verification_sent": verificationSent,
+		"message":                 "account created — check your inbox for the 6-digit code",
+		"email":                   req.Email,
+		"needs_verification":      true,
+		"email_verification_sent": sent,
+	})
+}
+
+// SendVerificationCode is the standalone code request endpoint: it (re)sends
+// a 6-digit OTP to the given address. Same 60-second per-account cooldown and
+// IP throttling as ResendCode; same opaque answer for unknown addresses.
+func (h *AuthHandler) SendVerificationCode(c *gin.Context) {
+	var req model.ResendCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
+		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+
+	user, err := h.repo.GetByEmail(c.Request.Context(), req.Email)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "if that address is registered, a code is on its way"})
+		return
+	}
+	if user.EmailVerifiedAt != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "that email is already verified"})
+		return
+	}
+
+	ok, rerr := h.svc.CanResend(c.Request.Context(), user.ID)
+	if rerr != nil || !ok {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "please wait 60 seconds before requesting another code"})
+		return
+	}
+
+	sent := h.sendVerificationCode(c, user.ID, user.Email, user.Name)
+	c.JSON(http.StatusOK, gin.H{
+		"message":                 "if that address is registered, a code is on its way",
+		"email_verification_sent": sent,
 	})
 }
 
@@ -147,6 +219,31 @@ func (h *AuthHandler) VerifyCode(c *gin.Context) {
 	}
 
 	if err := h.svc.ConsumeCode(c.Request.Context(), user.ID, req.Code); err != nil {
+		if errors.Is(err, auth.ErrCodeExpired) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "this code has expired — request a new one",
+				"code":  "CODE_EXPIRED",
+			})
+			return
+		}
+		// Distinguish "wrong" from "locked": after 5 wrong guesses the live
+		// code is burned and only a fresh code (60s cooldown) works.
+		if attempts, burned, aerr := h.svc.CodeAttempts(c.Request.Context(), user.ID); aerr == nil {
+			if burned || attempts >= auth.MaxCodeAttempts() {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "too many wrong attempts — request a new code",
+					"code":  "CODE_BURNED",
+				})
+				return
+			}
+			remaining := auth.MaxCodeAttempts() - attempts
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":     "invalid or expired verification code",
+				"code":      "CODE_INVALID",
+				"remaining": remaining,
+			})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification code"})
 		return
 	}
@@ -165,7 +262,31 @@ func (h *AuthHandler) VerifyCode(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "email verified — welcome to Mesa OS"})
+	// Verification doubles as sign-in: mint the session now so the newly
+	// verified owner lands straight on their dashboard instead of typing a
+	// password they just proved ownership of the inbox for.
+	branchID := ""
+	if user.BranchID != nil {
+		branchID = *user.BranchID
+	}
+	tokens, terr := auth.GenerateTokenPair(user.ID, user.Email, user.Role, branchID, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	if terr != nil {
+		// Verification still stands — the client falls back to the login page.
+		c.JSON(http.StatusOK, gin.H{"message": "email verified — welcome to Mesa OS"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "email verified — welcome to Mesa OS",
+		"user": gin.H{
+			"id":             user.ID,
+			"email":          user.Email,
+			"role":           user.Role,
+			"branch_id":      branchID,
+			"email_verified": true,
+		},
+		"tokens": tokens,
+	})
 }
 
 // ResendCode sends a fresh 6-digit code, throttled to one per 60 seconds.
@@ -235,6 +356,17 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	// A Corporate Admin may only mint accounts with an RBAC-known role; an
+	// arbitrary label would bypass the role hierarchy on every gateway.
+	req.Role = strings.TrimSpace(req.Role)
+	if req.Role == "" {
+		req.Role = "Cashier"
+	}
+	if !allowedStaffRoles[req.Role] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported role — pick Cashier, Store Manager, Inventory Auditor or Corporate Admin"})
+		return
+	}
+
 	userID, err := h.svc.Register(c.Request.Context(), req.Name, req.Email, req.Password, req.Role, req.BranchID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -264,18 +396,55 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	})
 }
 
-// VerifyEmail consumes the emailed token and marks the account verified,
-// then sends the welcome email.
+// VerifyEmail consumes the emailed proof and marks the account verified,
+// then sends the welcome email. Two proof shapes are accepted: the long
+// single-use link token (token field) or the 6-digit OTP (email + code).
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	var req model.VerifyEmailRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "verification token is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "verification token or email+code is required"})
 		return
 	}
 
-	userID, err := h.svc.ConsumeToken(c.Request.Context(), req.Token, auth.TokenVerifyEmail)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification link"})
+	var userID string
+	if strings.TrimSpace(req.Code) != "" {
+		// OTP path — same validation as VerifyCode's code branch.
+		emailAddr := strings.TrimSpace(req.Email)
+		if emailAddr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "email is required with a code"})
+			return
+		}
+		user, uerr := h.repo.GetByEmail(c.Request.Context(), emailAddr)
+		if uerr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification code"})
+			return
+		}
+		if user.EmailVerifiedAt != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "email already verified"})
+			return
+		}
+		if cerr := h.svc.ConsumeCode(c.Request.Context(), user.ID, strings.TrimSpace(req.Code)); cerr != nil {
+			if errors.Is(cerr, auth.ErrCodeExpired) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": "this code has expired — request a new one",
+					"code":  "CODE_EXPIRED",
+				})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification code"})
+			return
+		}
+		userID = user.ID
+	} else if strings.TrimSpace(req.Token) != "" {
+		// Link-token path.
+		uid, terr := h.svc.ConsumeToken(c.Request.Context(), strings.TrimSpace(req.Token), auth.TokenVerifyEmail)
+		if terr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid or expired verification link"})
+			return
+		}
+		userID = uid
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "verification token or email+code is required"})
 		return
 	}
 

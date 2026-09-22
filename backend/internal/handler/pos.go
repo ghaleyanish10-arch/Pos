@@ -32,14 +32,27 @@ func (h *POSHandler) UpdateTableState(c *gin.Context) {
 }
 
 func (h *POSHandler) GetTableBill(c *gin.Context) {
-	items, total, err := h.repo.GetTableBill(c.Request.Context(), c.Param("id"))
+	items, total, orderID, err := h.repo.GetTableBill(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no open bill for this table"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items": items,
-		"total": total,
+		"items":    items,
+		"total":    total,
+		"order_id": orderID,
 	})
+}
+
+// CloseTable settles the table: every open order on it is closed so the
+// floor plan derives the table back to 'Open'. Called by Front of House
+// after payment/turn-away.
+func (h *POSHandler) CloseTable(c *gin.Context) {
+	n, err := h.repo.CloseTable(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"closed": n})
 }

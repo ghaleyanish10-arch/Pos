@@ -64,3 +64,19 @@ func (r *UserRepo) List(ctx context.Context) ([]model.User, error) {
 	}
 	return users, nil
 }
+
+// SyncStaffByName mirrors a staff roster edit onto the matching PIN-login
+// users row. Only rows already holding a staff role are touched, so an admin
+// account sharing a name is never reassigned by accident.
+func (r *UserRepo) SyncStaffByName(ctx context.Context, oldName, newName, role string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET
+		   name = COALESCE(NULLIF($1, ''), name),
+		   role = COALESCE(NULLIF($2, ''), role)
+		 WHERE name = $3
+		   AND role IN ('Cashier', 'Store Manager', 'Inventory Auditor', 'Corporate Admin')
+		   AND password_hash = ''`,
+		newName, role, oldName,
+	)
+	return err
+}

@@ -3,7 +3,10 @@ package handler
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // contextWithTimeout gives outbound email calls a bounded lifetime so a slow
@@ -24,4 +27,23 @@ func strPtrOrNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// actorString extracts the acting user's id from the auth context for audit
+// attribution; empty when called from an unauthenticated route.
+func actorString(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// validUUID reports whether s is a well-formed UUIDv4. Empty never passes, so
+// callers use it after deciding the field is required.
+func validUUID(s string) bool {
+	if s == "" {
+		return false
+	}
+	_, err := uuid.Parse(strings.TrimSpace(s))
+	return err == nil
 }

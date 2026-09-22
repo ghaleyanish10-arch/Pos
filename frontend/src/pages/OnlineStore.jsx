@@ -39,6 +39,8 @@ export function OnlineStore() {
   const [tab, setTab] = useState('Theme');
   const [orders, setOrders] = useState(initialOrders);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [payMethods, setPayMethods] = useState(() => ['eSewa', 'Khalti', 'Fonepay QR', 'Card on delivery', 'Cash on delivery']);
+  const [autoAccept, setAutoAccept] = useState(true);
   const { storefront, setStorefront } = useSettings();
   const { addTicket } = useOrders();
   const { campaignList } = useCampaigns();
@@ -143,19 +145,12 @@ export function OnlineStore() {
 
       <div className="mb-6 grid gap-3 sm:grid-cols-3">
         <StatCard label="Online orders today" value="38" meta="Rs 42,180" />
-        <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3.5">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
-              Storefront
-            </p>
-            <p className="mt-1.5 text-2xl font-extrabold tracking-tight text-ink">
-              {open ? 'Open' : 'Closed'}
-            </p>
-          </div>
-          <Toggle checked={open} onChange={setOpen} label="Storefront open" />
-        </div>
+        <StatCard
+          label="Storefront"
+          value={open ? 'Open' : 'Closed'}
+          icon={<Toggle checked={open} onChange={setOpen} label="Storefront open" />} />
         <div className="rounded-xl border border-line bg-surface px-4 py-3.5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+          <p className="text-caption font-semibold text-meta">
             Menu sync
           </p>
           <p className="mt-2 flex items-center gap-2 text-sm font-bold text-status-green">
@@ -175,7 +170,7 @@ export function OnlineStore() {
               type="button"
               onClick={() => setTab(t)}
               aria-pressed={t === tab}
-              className={`h-9 rounded-full border px-4 text-[13px] font-semibold transition-colors duration-150 ease-soft ${
+              className={`h-9 rounded-full border px-4 text-13 font-semibold transition-colors duration-150 ease-soft ${
               t === tab ?
               'border-ink bg-ink text-white' :
               'border-line bg-surface text-meta hover:text-ink'}`
@@ -189,12 +184,12 @@ export function OnlineStore() {
           <Card>
             {tab === 'Theme' &&
             <div className="space-y-5">
-                <h2 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">
+                <h2 className="text-base font-bold tracking-tight text-ink">
                   Theme
                 </h2>
                 <div>
                   <div className="mb-2 flex items-center justify-between">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                    <p className="text-caption font-semibold text-meta">
                       Accent colour
                     </p>
                     <p className="font-mono text-xs font-bold text-ink">{accent}</p>
@@ -235,7 +230,7 @@ export function OnlineStore() {
 
             {tab === 'Delivery zones' &&
             <div className="space-y-3">
-                <h2 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">
+                <h2 className="text-base font-bold tracking-tight text-ink">
                   Delivery zones
                 </h2>
                 {[
@@ -253,9 +248,7 @@ export function OnlineStore() {
                         {z.fee} delivery · {z.eta} average
                       </p>
                     </div>
-                    <Button size="sm" variant="outline">
-                      Edit
-                    </Button>
+                    <Pill tone="neutral">{z.fee}</Pill>
                   </div>
               )}
               </div>
@@ -263,17 +256,24 @@ export function OnlineStore() {
 
             {tab === 'Payment methods' &&
             <div className="space-y-3">
-                <h2 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">
+                <h2 className="text-base font-bold tracking-tight text-ink">
                   Payment methods
                 </h2>
                 {['eSewa', 'Khalti', 'Fonepay QR', 'Card on delivery', 'Cash on delivery'].map(
-                (m, i) =>
+                (m) =>
                 <div
                   key={m}
                   className="flex items-center justify-between rounded-xl border border-line bg-canvas px-4 py-3">
                   
                       <span className="text-sm font-semibold text-ink">{m}</span>
-                      <Toggle checked={i !== 3} onChange={() => undefined} label={m} />
+                      <Toggle
+                        checked={payMethods.includes(m)}
+                        onChange={() =>
+                          setPayMethods((prev) =>
+                            prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
+                          )
+                        }
+                        label={m} />
                     </div>
 
               )}
@@ -282,7 +282,7 @@ export function OnlineStore() {
 
             {tab === 'Order sync' &&
             <div className="space-y-4">
-                <h2 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">
+                <h2 className="text-base font-bold tracking-tight text-ink">
                   Order sync
                 </h2>
                 <p className="text-sm text-meta">
@@ -292,7 +292,7 @@ export function OnlineStore() {
                 <div className="rounded-xl border border-line bg-canvas p-4">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold">Auto-accept orders</span>
-                    <Toggle checked onChange={() => undefined} label="Auto-accept orders" />
+                    <Toggle checked={autoAccept} onChange={setAutoAccept} label="Auto-accept orders" />
                   </div>
                   <p className="mt-1 text-xs text-meta">
                     Orders over Rs 5,000 still require manual acceptance.
@@ -306,7 +306,7 @@ export function OnlineStore() {
                 </div>
 
                 <div className="border-t border-line pt-4">
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                  <h3 className="text-caption font-semibold text-meta">
                     Recent orders
                   </h3>
                   <TableWrap>
@@ -363,7 +363,7 @@ export function OnlineStore() {
           </MobileFrame>
 
           <div className="mt-4 rounded-card border border-line bg-surface p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+            <p className="text-caption font-semibold text-meta">
               Customer register
             </p>
             <p className="mt-1 text-xs text-meta">
@@ -371,7 +371,7 @@ export function OnlineStore() {
             </p>
             <Link
               to="/register/customer"
-              className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-ink text-sm font-bold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
+              className="btn btn-primary btn-lg mt-3 w-full">
               <ExternalLinkIcon className="h-4 w-4" />
               Open customer register
             </Link>
@@ -418,7 +418,7 @@ export function OnlineStore() {
         {selectedOrder && (
           <div className="scroll-thin max-h-[60vh] space-y-5 overflow-y-auto pr-1">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="text-caption font-semibold text-meta">
                 Items
               </p>
               <div className="mt-2 space-y-2">
@@ -441,14 +441,14 @@ export function OnlineStore() {
             </div>
 
             <div className="border-t border-line pt-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="text-caption font-semibold text-meta">
                 {selectedOrder.type === 'delivery' ? 'Delivery address' : 'Pickup'}
               </p>
               <p className="mt-1 text-sm font-semibold text-ink">{selectedOrder.address}</p>
             </div>
 
             <div className="border-t border-line pt-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="text-caption font-semibold text-meta">
                 Status
               </p>
               <div className="mt-3">

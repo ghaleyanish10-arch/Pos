@@ -54,6 +54,10 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	deviceRepo := repo.NewDeviceRepo(pool)
 	auditRepo := repo.NewAuditRepo(pool)
 	reportRepo := repo.NewReportRepo(pool)
+	gatewayRepo := repo.NewGatewayRepo(pool)
+	payrollRepo := repo.NewPayrollRepo(pool)
+	printerRepo := repo.NewPrinterRepo(pool)
+	branchesRepo := repo.NewBranchesRepo(pool)
 
 	// Auth service & handler
 	authSvc := auth.NewService(pool)
@@ -62,9 +66,11 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	// Handlers
 	authH := handler.NewAuthHandler(authSvc, userRepo, cfg)
 	authH.SetEmail(resend)
+	authH.SetSMTP(smtpMailer)
 	elevationH := handler.NewElevationHandler(elevationRepo, auditRepo, authSvc, cfg)
-	clockinH := handler.NewClockInHandler(elevationRepo, deviceRepo, auditRepo, cfg)
+	clockinH := handler.NewClockInHandler(elevationRepo, deviceRepo, auditRepo, authSvc, cfg)
 	orderH := handler.NewOrderHandler(orderRepo)
+	orderH.SetMenuRepo(menuRepo)
 	ticketH := handler.NewTicketHandler(ticketRepo)
 	txH := handler.NewTransactionHandler(txRepo)
 	txH.SetMailer(smtpMailer)
@@ -94,6 +100,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	auditH := handler.NewAuditHandler(auditRepo)
 	reportH := handler.NewReportHandler(reportRepo)
 	healthH := handler.NewHealthHandler()
+	branchesH := handler.NewBranchesHandler(branchesRepo)
 
 	// Auth middleware
 	authMW := middleware.AuthMiddleware(cfg.JWTSecret)
@@ -104,13 +111,18 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 
 	api := r.Group("/api/v1")
 
+	// Shared throttle for the verification-code endpoints (per-IP, on top of
+	// the per-account 60s resend cooldown).
+	verifyLimit := middleware.RateLimitByIP(10, time.Minute)
+
 	// Public routes
 	api.POST("/auth/login", authH.Login)
 	api.POST("/auth/refresh", authH.Refresh)
-	api.GET("/health", healthH.Check)		// Email-verified account flows (public: the user has no session yet)
-		api.POST("/auth/verify-email", authH.VerifyEmail)
-		api.POST("/auth/forgot-password", authH.ForgotPassword)
-		api.POST("/auth/reset-password", authH.ResetPassword)
+	api.GET("/health", healthH.Check)
+	// Email-verified account flows (public: the user has no session yet)
+	api.POST("/auth/verify-email", verifyLimit, authH.VerifyEmail)
+	api.POST("/auth/forgot-password", authH.ForgotPassword)
+	api.POST("/auth/reset-password", authH.ResetPassword)
 
 		// Customer ordering (public: a scanned table QR or storefront link has
 		// no session). The order lands in the orders table and KDS as an
@@ -119,10 +131,13 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 
 		// Public business-owner signup + 6-digit email verification. The
 		// account can sign in immediately; the admin dashboard stays locked
-		// until a code is entered.
+		// until a code is entered. The verify/resend pair is IP-throttled on
+		// top of the per-account 60s resend cooldown.
 		api.POST("/auth/signup", authH.Signup)
-		api.POST("/auth/verify-code", authH.VerifyCode)
-		api.POST("/auth/resend-code", authH.ResendCode)
+		api.GET("/auth/providers", authH.Providers)
+		api.POST("/auth/verify-code", verifyLimit, authH.VerifyCode)
+		api.POST("/auth/resend-code", verifyLimit, authH.ResendCode)
+		api.POST("/auth/send-verification-code", verifyLimit, authH.SendVerificationCode)
 
 		// Google OAuth — server-side code exchange; the secret never leaves here.
 		api.GET("/auth/google", authH.GoogleRedirect)
@@ -130,6 +145,9 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 
 		// PIN elevation (protected: requires a terminal session)
 		api.POST("/auth/elevate", authMW, elevationH.Elevate)
+
+		// Role switch (protected): a logged-in staff member re-enters their
+		// own PIN to re-wear the session as kitchen/cashier/manager/admin.
 
 		// Shared-terminal clock-in family — NOT a staff session: a terminal
 		// must be able to clock in before any staff session exists. The
@@ -153,6 +171,8 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	protected.Use(authMW)
 	{
 		// Auth
+		protected.POST("/auth/switch-role", clockinH.SwitchRole)
+		protected.POST("/auth/pin", clockinH.SetOwnPIN)
 		protected.POST("/auth/register", middleware.RequireRole("Corporate Admin"), authH.Register)
 		protected.GET("/auth/me", authH.Me)
 
@@ -198,9 +218,13 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.POST("/menu", middleware.RequireRole("Store Manager"), menuH.CreateItem)
 		protected.PUT("/menu/:id", middleware.RequireRole("Store Manager"), menuH.UpdateItem)
 		protected.DELETE("/menu/:id", middleware.RequireRole("Store Manager"), menuH.DeleteItem)
+		protected.PUT("/menu/bulk", middleware.RequireRole("Store Manager"), menuH.BulkUpdate)
 
 		// Inventory
 		protected.GET("/inventory", inventoryH.List)
+		protected.GET("/inventory/summary", inventoryH.Summary)
+		protected.GET("/inventory/waste", middleware.RequireRole("Store Manager"), inventoryH.WasteLog)
+		protected.POST("/inventory/waste", middleware.RequireRole("Store Manager"), inventoryH.RecordWaste)
 		protected.GET("/inventory/:id", inventoryH.GetByID)
 		protected.POST("/inventory", middleware.RequireRole("Store Manager"), inventoryH.Create)
 		protected.PUT("/inventory/:id", middleware.RequireRole("Store Manager"), inventoryH.Update)
@@ -249,10 +273,34 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.PUT("/waitlist/:id/notify", bookingH.NotifyWaitlist)
 
 		// Reports
+		protected.GET("/reports/overview", middleware.RequireRole("Store Manager"), verified, reportH.Overview)
 		protected.GET("/reports/revenue", middleware.RequireRole("Store Manager"), verified, reportH.Revenue)
 		protected.GET("/reports/top-sellers", middleware.RequireRole("Store Manager"), verified, reportH.TopSellers)
 		protected.GET("/reports/slow-movers", middleware.RequireRole("Store Manager"), verified, reportH.SlowMovers)
-		protected.GET("/reports/summary", middleware.RequireRole("Store Manager"), verified, reportH.Summary)
+		protected.GET("/reports/summary", middleware.RequireRole("Cashier"), reportH.Summary)
+
+		// Payroll — rates and totals are sensitive: manager/admin only.
+		payrollH := handler.NewPayrollHandler(payrollRepo)
+		protected.GET("/payroll/rates", middleware.RequireRole("Store Manager"), payrollH.Rates)
+		protected.PUT("/staff/:id/rate", middleware.RequireRole("Store Manager"), payrollH.SetRate)
+		protected.GET("/payroll/periods", middleware.RequireRole("Store Manager"), payrollH.ListPeriods)
+		protected.GET("/payroll/periods/:id", middleware.RequireRole("Store Manager"), payrollH.GetPeriod)
+		protected.POST("/payroll/periods", middleware.RequireRole("Store Manager"), payrollH.CreatePeriod)
+		protected.PUT("/payroll/periods/:id/status", middleware.RequireRole("Store Manager"), payrollH.SetStatus)
+
+		// Payment gateways (eSewa/Khalti/IME Pay) — config is manager/admin;
+		// the charge stub runs under any staff session (register use).
+		gatewayH := handler.NewGatewayHandler(gatewayRepo)
+		protected.GET("/gateways", middleware.RequireRole("Store Manager"), gatewayH.List)
+		protected.PUT("/gateways/:provider", middleware.RequireRole("Store Manager"), gatewayH.Save)
+		protected.POST("/gateways/:provider/charge", gatewayH.Charge)
+
+		// Printer assignments (KOT vs receipt per station) — manager/admin.
+		printerH := handler.NewPrinterHandler(printerRepo)
+		protected.GET("/printers", middleware.RequireRole("Store Manager"), printerH.List)
+		protected.POST("/printers", middleware.RequireRole("Store Manager"), printerH.Save)
+		protected.DELETE("/printers/:id", middleware.RequireRole("Store Manager"), printerH.Delete)
+		protected.POST("/printers/:id/test", middleware.RequireRole("Store Manager"), printerH.TestPrint)
 
 		// Invoices
 		protected.GET("/invoices", middleware.RequireRole("Store Manager"), invoiceH.List)
@@ -279,6 +327,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		// POS
 		protected.PUT("/pos/tables/:id", posH.UpdateTableState)
 		protected.GET("/pos/tables/:id/bill", posH.GetTableBill)
+		protected.PUT("/pos/tables/:id/close", posH.CloseTable)
 
 		// Fiscal
 		protected.GET("/fiscal", middleware.RequireRole("Corporate Admin"), verified, fiscalH.List)
@@ -326,9 +375,10 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 
 		// System Health
 		protected.GET("/health/branches", reportH.SystemHealth)
-	}
 
-	_ = time.Now() // keep time import used
+		// Branch references (id + name) for transfer routing and dropdowns.
+		protected.GET("/branches", branchesH.List)
+	}
 
 	return r
 }

@@ -1,4 +1,4 @@
-import { InboxIcon } from 'lucide-react';
+import { InboxIcon, Loader2Icon } from 'lucide-react';
 
 const toneBubble = {
   neutral: 'border-line bg-canvas text-meta',
@@ -16,6 +16,7 @@ export function EmptyState({
   action,
   tone = 'neutral',
   compact = false,
+  loading = false,
   className = ''
 }) {
   return (
@@ -23,7 +24,9 @@ export function EmptyState({
       <span
         aria-hidden="true"
         className={`flex h-14 w-14 items-center justify-center rounded-full border ${toneBubble[tone]}`}>
-        {icon ?? <InboxIcon className="h-6 w-6" />}
+        {loading
+          ? <Loader2Icon className="h-6 w-6 animate-spin" />
+          : icon ?? <InboxIcon className="h-6 w-6" />}
       </span>
       {title && (
         <h3 className="mt-4 text-base font-extrabold tracking-tight text-ink">{title}</h3>

@@ -90,7 +90,6 @@ export function Fiscal() {
           <LockIcon className="h-3.5 w-3.5" />
           Immutable record
         </span>
-        <Button variant="outline">Export for audit</Button>
       </PageHeader>
 
       <div className="mb-5">
@@ -207,7 +206,7 @@ export function Fiscal() {
         {selectedTxn &&
         <div className="space-y-5">
             <div className="rounded-xl border border-line bg-canvas p-4">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="mb-2 text-caption font-semibold text-meta">
                 Submission payload
               </p>
               <dl className="space-y-1.5 text-sm">
@@ -220,7 +219,7 @@ export function Fiscal() {
               </dl>
               {selectedTxn.payload.items &&
               <div className="mt-3 border-t border-line pt-3">
-                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                  <p className="mb-1.5 text-caption font-semibold text-meta">
                     Line items
                   </p>
                   <dl className="space-y-1 text-sm">
@@ -237,7 +236,7 @@ export function Fiscal() {
               }
             </div>
 
-            <div className="rounded-xl border border-[#F3CFCC] bg-tint-red p-4">
+            <div className="rounded-xl border border-tintBorder-red bg-tint-red p-4">
               <p className="text-sm font-semibold text-status-red">
                 {selectedTxn.error}
               </p>
@@ -299,7 +298,7 @@ export function Fiscal() {
         <div className="space-y-5">
             <div className="flex items-start justify-between gap-4 rounded-xl border border-line bg-canvas p-4">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <p className="text-caption font-semibold text-meta">
                   Payment method
                 </p>
                 <p className="mt-1 text-lg font-bold text-ink">{infoTxn.method}</p>

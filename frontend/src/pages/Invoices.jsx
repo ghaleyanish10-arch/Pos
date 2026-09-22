@@ -282,7 +282,7 @@ export function Invoices() {
 
           <div className="py-4">
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Line items</p>
+              <p className="text-caption font-semibold text-meta">Line items</p>
               <Button size="sm" variant="outline" icon={<PlusIcon className="h-3.5 w-3.5" />} onClick={() => setItems((p) => [...p, { ...emptyLine }])}>
                 Add line
               </Button>
@@ -290,9 +290,9 @@ export function Invoices() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-line">
-                  <th className="py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Description</th>
-                  <th className="w-24 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Qty</th>
-                  <th className="w-28 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Rate</th>
+                  <th className="py-2 text-left text-caption font-semibold text-meta">Description</th>
+                  <th className="w-24 py-2 text-right text-caption font-semibold text-meta">Qty</th>
+                  <th className="w-28 py-2 text-right text-caption font-semibold text-meta">Rate</th>
                   <th className="w-10 py-2" />
                 </tr>
               </thead>
@@ -356,13 +356,13 @@ export function Invoices() {
 
           {confirming ? (
             <div className="mt-6 border-t border-line pt-5">
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Confirm & send</p>
+              <p className="mb-3 text-caption font-semibold text-meta">Confirm & send</p>
               <div className="rounded-xl border border-line bg-canvas p-4 text-sm">
                 <p className="font-semibold text-ink">{party || 'Untitled client'}</p>
                 <p className="mt-1 font-mono text-meta">{rs(subtotal + tax)} · Due {shortDue(dueDate)}</p>
               </div>
               <div className="mt-4">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Delivery method</p>
+                <p className="mb-2 text-caption font-semibold text-meta">Delivery method</p>
                 <FilterChips options={['Email', 'Share link']} value={delivery} onChange={setDelivery} />
               </div>
               <div className="mt-5 flex items-center gap-2">
@@ -420,7 +420,7 @@ export function Invoices() {
                         <div className="flex items-center gap-2">
                           <Pill tone={statusTone[status]} dot>{status}</Pill>
                           {inv.chased_at && (
-                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                            <span className="text-caption font-semibold text-meta">
                               Chased · {new Date(inv.chased_at).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}
                             </span>
                           )}

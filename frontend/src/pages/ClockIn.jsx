@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Clock3Icon, DeleteIcon, LogInIcon, Settings2Icon, ShieldCheckIcon, XIcon } from 'lucide-react';
 import { api, getDeviceId } from '../api/client';
 import { frontendRole, ROLES, useRole } from '../state/RoleContext';
+import { BrandLogo } from '../components/auth/AuthChrome';
 
 function roleMeta(role) {
   const r = ROLES[frontendRole(role)];
@@ -90,7 +91,9 @@ export function ClockIn() {
           ? 'PIN locked after too many attempts. Ask a manager to reset it.'
           : e.status === 403
             ? 'Only a manager or boss can approve this terminal.'
-            : 'That PIN did not match. Try again.'
+            : e.status === 401
+              ? 'That PIN did not match. Try again.'
+              : (e.message || 'Could not reach the server — check the terminal connection.')
       );
       setShake((s) => s + 1);
       setPins('');
@@ -118,21 +121,9 @@ export function ClockIn() {
   return (
     <div className="flex min-h-full flex-col bg-canvas">
       <header className="flex items-center justify-between border-b border-line bg-surface px-5 py-4 lg:px-8">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-ink text-base font-black text-white">
-            M
-          </span>
-          <div>
-            <p className="text-sm font-bold leading-tight text-ink">
-              Mesa OS <span className="font-medium text-meta">· staff terminal</span>
-            </p>
-            {enabled ? (
-              <p className="text-[11px] text-meta">Pick who you are, then enter your PIN</p>
-            ) : (
-              <p className="text-[11px] text-meta">A manager or boss must approve this terminal first</p>
-            )}
-          </div>
-        </div>
+        <BrandLogo
+          title={<>Mesa OS <span className="font-medium text-meta">· staff terminal</span></>}
+          subtitle={enabled ? 'Pick who you are, then enter your PIN' : 'A manager or boss must approve this terminal first'} />
         <div className="hidden items-center gap-2 text-sm font-semibold text-meta sm:flex">
           <Clock3Icon className="h-4 w-4" />
           {hours}:{minutes}
@@ -153,13 +144,13 @@ export function ClockIn() {
             <p className="text-sm font-semibold text-ink">
               This terminal hasn't been approved for this branch yet.
             </p>
-            <p className="text-[11px] leading-relaxed text-meta">
+            <p className="text-caption leading-relaxed text-meta">
               A manager or boss needs to approve this terminal before staff can clock in here.
             </p>
             <button
               type="button"
               onClick={() => setSetupOpen(true)}
-              className="mt-1 flex h-11 items-center justify-center gap-2 rounded-xl bg-ink px-5 text-sm font-semibold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
+              className="btn btn-primary btn-lg mt-1">
               <Settings2Icon className="h-4 w-4" /> Set up this terminal
             </button>
           </div>
@@ -171,13 +162,13 @@ export function ClockIn() {
             transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
             className="w-full max-w-sm">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <h2 className="text-caption font-semibold text-meta">
                 {enabled ? 'Enter PIN to clock in' : 'Enter PIN to approve this terminal'}
               </h2>
               <button
                 type="button"
                 onClick={cancel}
-                className="flex h-8 items-center gap-1 rounded-lg text-[11px] font-semibold text-meta transition-colors hover:text-ink">
+                className="flex h-8 items-center gap-1 rounded-lg text-caption font-semibold text-meta transition-colors hover:text-ink">
                 <XIcon className="h-3.5 w-3.5" /> Cancel
               </button>
             </div>
@@ -194,7 +185,7 @@ export function ClockIn() {
                 </span>
                 <div>
                   <p className="text-sm font-semibold text-ink">{selected.name}</p>
-                  <p className="text-[11px] text-meta">{roleMeta(selected.role).label}</p>
+                  <p className="text-caption text-meta">{roleMeta(selected.role).label}</p>
                 </div>
               </div>
 
@@ -215,7 +206,7 @@ export function ClockIn() {
                   ))}
                 </div>
                 <div className="h-4 text-center">
-                  {error && <p className="text-[11px] font-semibold text-red-600">{error}</p>}
+                  {error && <p className="text-caption font-semibold text-status-red">{error}</p>}
                 </div>
               </motion.div>
 
@@ -240,7 +231,7 @@ export function ClockIn() {
                 type="button"
                 disabled={pins.length < 4 || busy}
                 onClick={submit}
-                className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-ink text-sm font-semibold text-white transition-opacity duration-150 ease-soft disabled:opacity-40">
+                className="btn btn-primary btn-lg mt-4 w-full">
                 {busy ? (enabled ? 'Checking…' : 'Approving…') : (
                   <>
                     <LogInIcon className="h-4 w-4" /> {enabled ? 'Clock in' : 'Approve terminal'}
@@ -251,7 +242,7 @@ export function ClockIn() {
           </motion.section>
         ) : (
           <section className="w-full max-w-2xl">
-            <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+            <h2 className="mb-3 text-caption font-semibold text-meta">
               {pickHeading}
             </h2>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -279,19 +270,19 @@ export function ClockIn() {
                         .toUpperCase()}
                     </span>
                     <span className="text-sm font-semibold text-ink">{u.name}</span>
-                    <span className="text-[11px] text-meta">{m.label}</span>
+                    <span className="text-caption text-meta">{m.label}</span>
                   </button>
                 );
               })}
             </div>
-            <p className="mt-4 text-[11px] text-meta">
+            <p className="mt-4 text-caption text-meta">
               {grid.length} staff member{grid.length === 1 ? '' : 's'}
             </p>
           </section>
         )}
       </main>
 
-      <footer className="border-t border-line px-6 py-3 text-center text-[11px] text-meta">
+      <footer className="border-t border-line px-6 py-3 text-center text-caption text-meta">
         Mesa OS shared terminal · sessions expire automatically after{" "}
         {Math.max(1, Number(localStorage.getItem('mesa_idle_min')) || Number(import.meta.env.VITE_IDLE_TIMEOUT_MIN) || 15)} min of inactivity
       </footer>

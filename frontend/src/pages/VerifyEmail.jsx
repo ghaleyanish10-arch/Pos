@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircleIcon, MailCheckIcon, RefreshCwIcon, ShieldCheckIcon, XCircleIcon } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { Pill } from '../components/ui/Pill';
-import api from '../api/client';
+import { AuthCard, AuthShell, BrandLogo } from '../components/auth/AuthChrome';
+import api, { authorizeSession } from '../api/client';
 
 const CODE_LEN = 6;
 
@@ -21,9 +21,14 @@ export function VerifyEmail() {
   const [digits, setDigits] = useState(Array(CODE_LEN).fill(''));
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeError, setCodeError] = useState('');
+  const [codeErrorWarn, setCodeErrorWarn] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [resent, setResent] = useState(false);
   const boxRefs = useRef([]);
+
+  const code = useMemo(() => digits.join(''), [digits]);
+  const codeComplete = code.length === CODE_LEN && digits.every((d) => d !== '');
 
   useEffect(() => {
     if (!token) return;
@@ -43,14 +48,6 @@ export function VerifyEmail() {
     return () => { cancelled = true; };
   }, [token]);
 
-  // Auto-verify when all six boxes are filled.
-  useEffect(() => {
-    if (state !== 'code') return;
-    if (digits.every((d) => d !== '')) {
-      submitCode(digits.join(''));
-    }
-  }, [digits]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // 60s resend cooldown countdown.
   useEffect(() => {
     if (cooldown <= 0) return undefined;
@@ -61,32 +58,88 @@ export function VerifyEmail() {
   const setDigit = (i, value) => {
     const clean = value.replace(/\D/g, '');
     const next = [...digits];
-    next[i] = clean.slice(-1);
+    // A single keystroke fills one box; a multi-character entry (autofill or
+    // paste through onChange) spreads across the boxes from this one.
+    if (clean.length > 1) {
+      for (let k = 0; k < clean.length && i + k < CODE_LEN; k++) next[i + k] = clean[k];
+      setDigits(next);
+      boxRefs.current[Math.min(i + clean.length, CODE_LEN - 1)]?.focus();
+      return;
+    }
+    next[i] = clean;
     setDigits(next);
     if (clean && i < CODE_LEN - 1) boxRefs.current[i + 1]?.focus();
   };
 
-  const submitCode = async (code) => {
-    if (codeBusy || code.length !== CODE_LEN) return;
+  // A paste anywhere fills the whole code from box 0, like OTP screens do.
+  const onPaste = (e) => {
+    const pasted = (e.clipboardData?.getData('text') || '').replace(/\D/g, '');
+    if (!pasted) return;
+    e.preventDefault();
+    const next = Array(CODE_LEN).fill('');
+    for (let k = 0; k < Math.min(pasted.length, CODE_LEN); k++) next[k] = pasted[k];
+    setDigits(next);
+    boxRefs.current[Math.min(pasted.length, CODE_LEN - 1)]?.focus();
+  };
+
+  const submitCode = async () => {
+    if (codeBusy || !codeComplete) return;
     setCodeBusy(true);
     setCodeError('');
+    setCodeErrorWarn(false);
     try {
-      await api('/auth/verify-code', { method: 'POST', body: { email, code } });
+      const res = await api('/auth/verify-code', { method: 'POST', body: { email, code } });
+      // The backend mints the session at verify time — go straight in.
+      if (res?.tokens?.access_token) {
+        await authorizeSession(res);
+        setState('ok');
+        setMessage('Your email is verified — welcome to Mesa OS.');
+        setTimeout(() => navigate('/', { replace: true }), 600);
+        return;
+      }
       setState('ok');
       setMessage('Your email is verified — welcome to Mesa OS.');
+      setTimeout(() => navigate('/login', { replace: true }), 900);
     } catch (e) {
-      setCodeError(e?.message || 'That code is invalid or has expired.');
-      setDigits(Array(CODE_LEN).fill(''));
+      // Distinct states per failure: expired code, locked (too many attempts),
+      // plain wrong digit, already verified — each with its own copy. Wrong
+      // digits keep every entered cell so the user can fix the exact box.
+      switch (e?.code) {
+        case 'CODE_EXPIRED':
+          setCodeError('This code has expired — request a new one below.');
+          setCodeErrorWarn(true);
+          break;
+        case 'CODE_BURNED':
+          setCodeError('Too many wrong attempts — request a new code below.');
+          setCodeErrorWarn(true);
+          break;
+        case 'CODE_INVALID': {
+          const remaining = typeof e?.remaining === 'number' ? e.remaining : null;
+          setCodeError(
+            remaining != null && remaining > 0
+              ? `That code is not right — ${remaining} attempt${remaining === 1 ? '' : 's'} left.`
+              : 'That code is not right — check it and try again.'
+          );
+          setCodeErrorWarn(false);
+          break;
+        }
+        default:
+          setCodeError(e?.message || 'That code is invalid or has expired.');
+          setCodeErrorWarn(false);
+      }
       boxRefs.current[0]?.focus();
+      boxRefs.current[0]?.select();
     } finally {
       setCodeBusy(false);
     }
   };
 
   const resend = async () => {
-    if (cooldown > 0 || codeBusy) return;
+    if (cooldown > 0 || codeBusy || resendBusy) return;
+    setResendBusy(true);
     setResent(false);
     setCodeError('');
+    setCodeErrorWarn(false);
     try {
       await api('/auth/resend-code', { method: 'POST', body: { email } });
       setResent(true);
@@ -94,16 +147,21 @@ export function VerifyEmail() {
     } catch (e) {
       if (e?.status === 429) {
         setCodeError('Please wait a minute before requesting another code.');
+        setCodeErrorWarn(true);
         setCooldown(60);
       } else {
         setCodeError(e?.message || 'Could not resend the code.');
+        setCodeErrorWarn(false);
       }
+    } finally {
+      setResendBusy(false);
     }
   };
 
   return (
-    <div className="mx-auto flex min-h-[70vh] w-full max-w-[480px] flex-col items-center justify-center">
-      <div className="w-full rounded-card border border-line bg-surface p-8 text-center">
+    <AuthShell>
+      <BrandLogo />
+      <AuthCard className="text-center">
         <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-tint-green text-status-green">
           {state === 'code' ? <ShieldCheckIcon className="h-7 w-7" /> : <MailCheckIcon className="h-7 w-7" />}
         </span>
@@ -129,18 +187,33 @@ export function VerifyEmail() {
                   value={d}
                   onFocus={(e) => e.target.select()}
                   onChange={(e) => setDigit(i, e.target.value)}
+                  onPaste={onPaste}
                   onKeyDown={(e) => {
                     if (e.key === 'Backspace' && !d && i > 0) boxRefs.current[i - 1]?.focus();
+                    if (e.key === 'Enter') submitCode();
                   }} />
               ))}
             </div>
 
-            {codeError && <p className="mt-3 text-sm font-semibold text-status-red">{codeError}</p>}
+            {codeError && (
+              <p className={`mt-3 text-sm font-semibold ${codeErrorWarn ? 'text-status-amber' : 'text-status-red'}`}>
+                {codeError}
+              </p>
+            )}
             {resent && <p className="mt-3 text-sm font-semibold text-status-green">A fresh code is on its way.</p>}
 
-            <div className="mt-5 flex items-center justify-center gap-2">
-              <Button variant="outline" size="sm" onClick={resend} disabled={cooldown > 0 || codeBusy} icon={<RefreshCwIcon className="h-3.5 w-3.5" />}>
-                {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
+            <Button
+              variant="dark"
+              full
+              className="mt-5"
+              disabled={!codeComplete || codeBusy}
+              onClick={submitCode}>
+              {codeBusy ? 'Verifying…' : 'Verify'}
+            </Button>
+
+            <div className="mt-3">
+              <Button variant="outline" size="sm" onClick={resend} disabled={cooldown > 0 || codeBusy || resendBusy} icon={<RefreshCwIcon className="h-3.5 w-3.5" />}>
+                {resendBusy ? 'Sending…' : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
               </Button>
             </div>
 
@@ -160,10 +233,7 @@ export function VerifyEmail() {
               <CheckCircleIcon className="h-5 w-5" />
               {message}
             </span>
-            <p className="mt-2 text-xs text-meta">Your dashboard is unlocked — sign in to get going.</p>
-            <Button variant="dark" className="mt-6" onClick={() => navigate('/login')}>
-              Sign in
-            </Button>
+            <p className="mt-2 text-xs text-meta">Taking you to your dashboard…</p>
           </>
         )}
 
@@ -187,14 +257,10 @@ export function VerifyEmail() {
             <p className="mt-3 text-sm text-meta">
               This page needs a verification code or link — open it from your email.
             </p>
-            <Pill tone="amber" className="mt-4">Nothing to verify</Pill>
+            <p className="mt-4 text-13 font-semibold text-status-amber">Nothing to verify here yet.</p>
           </>
         )}
-      </div>
-
-      <p className="mt-4 text-center text-xs text-meta">
-        Trouble? <Button variant="quiet" size="sm" className="underline">Contact support</Button>
-      </p>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

@@ -47,13 +47,25 @@ func (r *TransferRepo) List(ctx context.Context, status string) ([]model.BranchT
 
 func (r *TransferRepo) Create(ctx context.Context, t *model.BranchTransfer) error {
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO branch_transfers (item, qty, from_branch_id, to_branch_id, status) VALUES ($1, $2, $3, $4, 'Requested') RETURNING id, created_at`,
+		`INSERT INTO branch_transfers (item, qty, from_branch_id, to_branch_id, status) VALUES ($1, $2, $3, $4, 'Requested') RETURNING id, created_at, status`,
 		t.Item, t.Qty, t.FromBranchID, t.ToBranchID,
-	).Scan(&t.ID, &t.CreatedAt)
+	).Scan(&t.ID, &t.CreatedAt, &t.Status)
 	return err
 }
 
-func (r *TransferRepo) UpdateStatus(ctx context.Context, id, status string) error {
-	_, err := r.db.Exec(ctx, `UPDATE branch_transfers SET status = $1 WHERE id = $2`, status, id)
-	return err
+// BranchExists reports whether a branch id exists (from/to ids are foreign keys).
+func (r *TransferRepo) BranchExists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM branches WHERE id = $1)`, id).Scan(&exists)
+	return exists, err
+}
+
+// UpdateStatus flips a transfer's state. Reports how many rows matched so
+// callers can distinguish "received" from "no such transfer".
+func (r *TransferRepo) UpdateStatus(ctx context.Context, id, status string) (int64, error) {
+	tag, err := r.db.Exec(ctx, `UPDATE branch_transfers SET status = $1 WHERE id = $2`, status, id)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

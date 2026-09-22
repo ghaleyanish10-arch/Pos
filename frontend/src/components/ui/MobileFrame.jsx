@@ -16,7 +16,7 @@ export function MobileFrame({
         </div>
       </div>
       {label &&
-      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-meta">
+      <span className="text-caption font-medium text-meta">
           {label}
         </span>
       }

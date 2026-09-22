@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mesa-os/backend/internal/auth"
+	"github.com/mesa-os/backend/internal/middleware"
 )
 
 func TestSignupVerifyFlow(t *testing.T) {
@@ -23,7 +24,9 @@ func TestSignupVerifyFlow(t *testing.T) {
 			t.Fatalf("signup returned %d: %s", w.Code, w.Body.String())
 		}
 
-		// Account is an unverified Corporate Admin attached to a branch.
+		// Account is a pre-attached Corporate Admin, created UNVERIFIED: the
+		// signup response carries a 6-digit OTP (Gmail SMTP) and the account
+		// only becomes verified after POST /auth/verify-email with that code.
 		var role string
 		var branchID *string
 		var verified bool
@@ -39,7 +42,7 @@ func TestSignupVerifyFlow(t *testing.T) {
 			t.Error("owner not attached to a branch")
 		}
 		if verified {
-			t.Error("fresh signup must NOT be email-verified")
+			t.Error("fresh signup must be unverified until the OTP is confirmed")
 		}
 	})
 
@@ -65,6 +68,13 @@ func TestSignupVerifyFlow(t *testing.T) {
 		var userID string
 		if err := pool.QueryRow(context.Background(), `SELECT id FROM users WHERE email = $1`, email).Scan(&userID); err != nil {
 			t.Fatalf("get user: %v", err)
+		}
+		// Signup already leaves the account unverified; make it explicit so
+		// this subtest stays independent of the create-account one.
+		if _, err := pool.Exec(context.Background(),
+			`UPDATE users SET email_verified_at = NULL WHERE id = $1`, userID,
+		); err != nil {
+			t.Fatalf("clear verification stamp: %v", err)
 		}
 		if _, err := pool.Exec(context.Background(),
 			`INSERT INTO verification_codes (user_id, code_hash, expires_at) VALUES ($1, $2, now() + interval '10 minutes')`,
@@ -129,13 +139,28 @@ func TestResendCode(t *testing.T) {
 		t.Fatalf("signup returned %d", w.Code)
 	}
 
+	// Signup leaves accounts unverified; ensure that state explicitly so this
+	// test does not depend on ordering.
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE users SET email_verified_at = NULL WHERE email = $1`, email,
+	); err != nil {
+		t.Fatalf("clear verification stamp: %v", err)
+	}
+
 	// Unknown email answers neutrally — no account enumeration.
 	w = doReq(r, http.MethodPost, "/api/v1/auth/resend-code", "", map[string]string{"email": "ghost@test.dev"})
 	if w.Code != http.StatusOK {
 		t.Errorf("resend for unknown email returned %d, want 200", w.Code)
 	}
 
-	// A code was just issued at signup time; a resend right away is throttled.
+	// Signup no longer mints a code (verification removed), so stamp the send
+	// time to simulate a code that was just issued — a resend right away must
+	// be throttled.
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE users SET last_code_sent_at = now() WHERE email = $1`, email,
+	); err != nil {
+		t.Fatalf("stamp send time: %v", err)
+	}
 	w = doReq(r, http.MethodPost, "/api/v1/auth/resend-code", "", map[string]string{"email": email})
 	if w.Code != http.StatusTooManyRequests {
 		t.Errorf("throttled resend returned %d, want 429", w.Code)
@@ -154,6 +179,9 @@ func TestResendCode(t *testing.T) {
 }
 
 func TestAdminDashboardGatedByEmailVerification(t *testing.T) {
+	if middleware.VERIFICATION_DISABLED {
+		t.Skip("email verification is kill-switched off (local/demo mode) — the gate is bypassed end to end")
+	}
 	r, pool := newTestRouter(t)
 	email := "gated-owner@test.dev"
 

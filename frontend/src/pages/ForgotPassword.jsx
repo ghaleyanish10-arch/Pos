@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { KeyRoundIcon } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Field, inputClass } from '../components/ui/Controls';
+import { AuthCard, AuthShell, BrandLogo } from '../components/auth/AuthChrome';
 import api from '../api/client';
 
 export function ForgotPassword() {
@@ -30,8 +31,9 @@ export function ForgotPassword() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[70vh] w-full max-w-[480px] flex-col items-center justify-center">
-      <div className="w-full rounded-card border border-line bg-surface p-8">
+    <AuthShell>
+      <BrandLogo />
+      <AuthCard>
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-tint-blue text-status-blue">
           <KeyRoundIcon className="h-7 w-7" />
         </span>
@@ -46,7 +48,7 @@ export function ForgotPassword() {
             <p className="mt-2 text-xs text-meta">The link expires in 1 hour.</p>
             <Link
               to="/"
-              className="mt-6 inline-flex h-11 w-full items-center justify-center rounded-xl bg-ink text-sm font-bold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
+              className="btn btn-outline mt-6 w-full">
               Back to the app
             </Link>
           </>
@@ -70,7 +72,7 @@ export function ForgotPassword() {
             </Link>
           </form>
         )}
-      </div>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

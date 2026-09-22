@@ -95,3 +95,49 @@ func (h *MenuHandler) DeleteItem(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "menu item deleted"})
 }
+
+// BulkUpdate applies one change (price bump, 86-out, category move, publish
+// flip) to many items in one call — the backbone of bulk editing.
+func (h *MenuHandler) BulkUpdate(c *gin.Context) {
+	var req model.BulkUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids must not be empty"})
+		return
+	}
+	for _, id := range req.IDs {
+		if !validUUID(id) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid menu item id: " + id})
+			return
+		}
+	}
+	// A set-price edit and a percentage bump together is ambiguous — reject.
+	if req.PriceDelta != nil && req.PricePercent != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "use price_delta or price_percent, not both"})
+		return
+	}
+	// category_id may arrive as a display name ("Momo & Snacks") from the bulk
+	// editor — resolve it to the real id so unknown names become a clean 400
+	// instead of a Postgres uuid-parse 500.
+	if req.CategoryID != "" {
+		resolved, err := h.repo.ResolveCategoryID(c.Request.Context(), req.CategoryID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if resolved == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown category: " + req.CategoryID})
+			return
+		}
+		req.CategoryID = resolved
+	}
+	n, err := h.repo.BulkUpdate(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"updated": n})
+}

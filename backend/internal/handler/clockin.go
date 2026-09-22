@@ -32,11 +32,12 @@ type ClockInHandler struct {
 	repo    *repo.ElevationRepo
 	devices *repo.DeviceRepo
 	audit   *repo.AuditRepo
+	authSvc *auth.Service
 	config  *config.Config
 }
 
-func NewClockInHandler(r *repo.ElevationRepo, d *repo.DeviceRepo, a *repo.AuditRepo, cfg *config.Config) *ClockInHandler {
-	return &ClockInHandler{repo: r, devices: d, audit: a, config: cfg}
+func NewClockInHandler(r *repo.ElevationRepo, d *repo.DeviceRepo, a *repo.AuditRepo, s *auth.Service, cfg *config.Config) *ClockInHandler {
+	return &ClockInHandler{repo: r, devices: d, audit: a, authSvc: s, config: cfg}
 }
 
 // clockAudit writes one audit_events row per clock-in/out event. actorID is
@@ -65,6 +66,25 @@ func (h *ClockInHandler) clockAudit(c *gin.Context, actorID, actorName, actorRol
 	if err := h.audit.Create(c.Request.Context(), event); err != nil {
 		ginLog("clock audit write failed: " + err.Error())
 	}
+}
+
+// noPIN responds for an account that has never had a PIN set (typically an
+// owner who signed up with Google, so there is no login password from which
+// a PIN could have been derived). Without this guard, VerifyPIN treats "no
+// PIN" as a wrong PIN and burns lockout attempts on something the user can
+// never get right. It answers 409 with code NO_PIN_SET so the frontend can
+// offer first-time PIN creation instead of a dead-end error.
+func (h *ClockInHandler) noPIN(c *gin.Context, status *repo.PINStatus, flow string) bool {
+	if status.PINHash != nil {
+		return false
+	}
+	h.clockAudit(c, status.UserID, status.Name, status.Role, "pin.missing",
+		flow+" attempt on account without a PIN", map[string]any{"flow": flow})
+	c.JSON(http.StatusConflict, gin.H{
+		"error": "No PIN is set for your account yet. Create one to continue.",
+		"code":  "NO_PIN_SET",
+	})
+	return true
 }
 
 // pinFailure handles a wrong-PIN attempt identically for every flow that
@@ -202,6 +222,9 @@ func (h *ClockInHandler) ClockIn(c *gin.Context) {
 		return
 	}
 
+	if h.noPIN(c, status, "clockin") {
+		return
+	}
 	if !auth.VerifyPIN(status.PINHash, req.PIN) {
 		pinFailure(c, h.repo, h.clockAudit, status, base, "clockin")
 		return
@@ -356,6 +379,9 @@ func (h *ClockInHandler) TerminalEnable(c *gin.Context) {
 		return
 	}
 
+	if h.noPIN(c, status, "terminal") {
+		return
+	}
 	if !auth.VerifyPIN(status.PINHash, req.PIN) {
 		pinFailure(c, h.repo, h.clockAudit, status, base, "terminal")
 		return

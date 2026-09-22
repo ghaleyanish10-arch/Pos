@@ -1,9 +1,15 @@
 // Package mailer sends real emails over SMTP. It stays out of the way when
 // SMTP is not configured: callers check Configured() first and degrade.
+//
+// Gmail specifically: use smtp.gmail.com:587 with an App Password
+// (myaccount.google.com → Security → 2-Step Verification → App passwords).
+// The account password itself will NOT work — Google rejects plain login.
 package mailer
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -38,14 +44,94 @@ func (m *Mailer) Send(to, subject, textBody, htmlBody string) error {
 	if to == "" {
 		return fmt.Errorf("recipient email is empty")
 	}
-
 	msg := buildMessage(m.from, to, subject, textBody, htmlBody)
 
+	// AUTH is only attempted when a username is configured. Go's PlainAuth
+	// refuses to authenticate over an unencrypted connection unless the
+	// server is "localhost", so anonymous relays (local MailHog/devboxes,
+	// unauthenticated gateways) must not be handed an Auth at all — sending
+	// with auth=nil skips the AUTH verb entirely. Real providers always pair
+	// credentials with TLS (implicit 465 or STARTTLS on 587), where Go
+	// negotiates the secure channel before authenticating.
 	var auth smtp.Auth
 	if m.username != "" {
 		auth = smtp.PlainAuth("", m.username, m.password, m.host)
 	}
 	return smtp.SendMail(m.addr(), auth, m.from, []string{to}, msg)
+}
+
+// SendWithTLS delivers over an explicit TLS connection (implicit TLS on the
+// submission port 465). Gmail's 587 path is STARTTLS, which smtp.SendMail
+// already negotiates; some corporate networks block 587, so 465 is the
+// fallback. Used by the OTP verification flow, which must actually deliver.
+func (m *Mailer) SendWithTLS(to, subject, textBody, htmlBody string) error {
+	if !m.Configured() {
+		return fmt.Errorf("smtp is not configured")
+	}
+	if to == "" {
+		return fmt.Errorf("recipient email is empty")
+	}
+
+	host, _, err := net.SplitHostPort(m.addr())
+	if err != nil {
+		host = m.host
+	}
+	conn, err := tls.Dial("tcp", m.host+":465", &tls.Config{ServerName: host})
+	if err != nil {
+		// 465 blocked — fall back to the STARTTLS path on the configured port.
+		return m.Send(to, subject, textBody, htmlBody)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, m.host)
+	if err != nil {
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer client.Close()
+
+	if ok, _ := client.Extension("AUTH"); ok && m.username != "" {
+		if err = client.Auth(smtp.PlainAuth("", m.username, m.password, m.host)); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+	if err = client.Mail(m.from); err != nil {
+		return err
+	}
+	if err = client.Rcpt(to); err != nil {
+		return err
+	}
+	w, err := client.Data()
+	if err != nil {
+		return err
+	}
+	if _, err = w.Write(buildMessage(m.from, to, subject, textBody, htmlBody)); err != nil {
+		return err
+	}
+	if err = w.Close(); err != nil {
+		return err
+	}
+	return client.Quit()
+}
+
+// SendVerificationCode emails the 6-digit OTP for account verification.
+// The code renders as large letter-spaced digits — easy to read from a phone
+// held in one hand. Copy states the 10-minute expiry and single-use rule.
+func (m *Mailer) SendVerificationCode(to, name, code string) error {
+	subject := "Your Mesa OS verification code"
+	text := fmt.Sprintf("Hey %s,\n\nYour Mesa OS verification code is %s.\nIt expires in 10 minutes and can only be used once.\n\nIf you didn't request this, ignore this email.\n", name, code)
+	html := fmt.Sprintf(`<!DOCTYPE html>
+<html><body style="margin:0;padding:24px;background:#f5f5f4;font-family:-apple-system,Segoe UI,Roboto,sans-serif">
+  <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px">
+    <h1 style="margin:0 0 12px;font-size:24px;color:#111">Hey %s</h1>
+    <p style="margin:0 0 20px;font-size:15px;color:#333;line-height:1.6">
+      Enter this code to activate your Mesa OS account. It expires in 10 minutes
+      and can only be used once.
+    </p>
+    <div style="margin:24px 0;padding:20px;background:#f5f5f4;border-radius:12px;text-align:center;font-family:monospace;font-size:34px;font-weight:bold;letter-spacing:10px;color:#111">%s</div>
+    <p style="margin:0;font-size:12px;color:#888">If you didn't request this code, you can safely ignore this email.</p>
+  </div>
+</body></html>`, name, code)
+	return m.SendWithTLS(to, subject, text, html)
 }
 
 // SendInvoiceEmail composes and sends the invoice receipt for an invoice.

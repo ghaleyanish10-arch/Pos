@@ -22,7 +22,7 @@ export function Dialog({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
-          className="absolute inset-0 bg-ink/25" />
+          className="absolute inset-0 bg-ink/30 backdrop-blur-[2px]" />
         
           <motion.div
           role="dialog"
@@ -31,12 +31,12 @@ export function Dialog({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97, y: 10 }}
           transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
-          className={`relative w-full ${width} rounded-card border border-line bg-surface shadow-pop`}>
+          className={`relative w-full ${width} rounded-card border border-line bg-surface shadow-pop-lg`}>
             
             {title &&
           <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
                 <div>
-                  <h3 className="text-base font-extrabold tracking-tight text-ink">
+                  <h3 className="sheet-title">
                     {title}
                   </h3>
                   {subtitle &&
@@ -47,7 +47,7 @@ export function Dialog({
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="rounded-lg p-1 text-meta transition-colors duration-150 ease-soft hover:bg-canvas hover:text-ink">
+                className="icon-btn h-8 w-8">
                   
                   <XIcon className="h-4 w-4" />
                 </button>

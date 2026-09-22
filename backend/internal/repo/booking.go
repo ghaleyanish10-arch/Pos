@@ -15,14 +15,42 @@ func NewBookingRepo(db *pgxpool.Pool) *BookingRepo {
 	return &BookingRepo{db: db}
 }
 
+// ListTables returns every floor table with its occupancy DERIVED from open
+// orders rather than from the FloorTable.State column it was seeded with:
+// `orders WHERE status='open' AND deleted_at IS NULL` is the single source of
+// truth for whether a table is seated. This is what keeps the floor in sync —
+// a register charge or a table-QR order immediately seats the table, and
+// paying/closing the check (which flips the order to 'closed') turns it back
+// to Vacant, on every device, with no drift.
+// ListTables returns the floor plan with LIVE, order-derived state. The
+// newest open order on a table forces 'Seated' and carries that order's
+// id/total/item-count; with no open order, a stale 'Seated' stored in
+// floor_tables is demoted to 'Open' while genuine manual states ('Reserved',
+// 'Needs attention', ...) pass through untouched.
 func (r *BookingRepo) ListTables(ctx context.Context, branchID string) ([]model.FloorTable, error) {
-	query := `SELECT id, name, seats, state, COALESCE(detail,''), branch_id::text FROM floor_tables`
+	query := `
+		SELECT ft.id, ft.name, ft.seats,
+		       CASE WHEN o.id IS NOT NULL THEN 'Seated'
+		            ELSE CASE WHEN ft.state IN ('Reserved', 'Needs attention', 'Check dropped', 'Open')
+		                      THEN ft.state ELSE 'Open' END END AS state,
+		       COALESCE(ft.detail,''), ft.branch_id::text,
+		       o.id, COALESCE(o.total, 0), COALESCE(items.cnt, 0)
+		FROM floor_tables ft
+		LEFT JOIN LATERAL (
+		    SELECT id, total FROM orders o2
+		    WHERE o2.table_id = ft.id AND o2.status = 'open' AND o2.deleted_at IS NULL
+		    ORDER BY o2.created_at DESC
+		    LIMIT 1
+		) o ON TRUE
+		LEFT JOIN LATERAL (
+		    SELECT COUNT(*)::int AS cnt FROM order_items oi WHERE oi.order_id = o.id
+		) items ON TRUE`
 	args := []interface{}{}
 	if branchID != "" {
-		query += ` WHERE branch_id = $1`
+		query += ` WHERE ft.branch_id = $1`
 		args = append(args, branchID)
 	}
-	query += ` ORDER BY name`
+	query += ` ORDER BY ft.name`
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -33,7 +61,7 @@ func (r *BookingRepo) ListTables(ctx context.Context, branchID string) ([]model.
 	var tables []model.FloorTable
 	for rows.Next() {
 		var t model.FloorTable
-		if err := rows.Scan(&t.ID, &t.Name, &t.Seats, &t.State, &t.Detail, &t.BranchID); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Seats, &t.State, &t.Detail, &t.BranchID, &t.OrderID, &t.OrderTotal, &t.ItemCount); err != nil {
 			return nil, err
 		}
 		tables = append(tables, t)
@@ -96,11 +124,9 @@ func (r *BookingRepo) SeatReservation(ctx context.Context, id, tableID string) e
 		return err
 	}
 
-	_, err = tx.Exec(ctx, `UPDATE floor_tables SET state = 'Seated' WHERE id = $1`, tableID)
-	if err != nil {
-		return err
-	}
-
+	// Table occupancy is derived from open orders (see ListTables), so seating
+	// a reservation must NOT poke floor_tables.state — that flag is what used
+	// to drift out of sync with reality.
 	return tx.Commit(ctx)
 }
 

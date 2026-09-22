@@ -114,7 +114,7 @@ export function Reviews() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1100px]">
+    <div className="mx-auto w-full max-w-[1400px]">
       <PageHeader title="Reviews" descriptor="All platforms · last 30 days">
         <Button variant="outline" onClick={() => setConnectDialogOpen(true)}>
           Connect platform
@@ -154,9 +154,9 @@ export function Reviews() {
 
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <h3 className="text-[15px] font-bold text-ink">{r.author}</h3>
+                  <h3 className="text-15 font-bold text-ink">{r.author}</h3>
                   <span
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] ${platformTone[r.platform]}`}>
+                  className={`rounded-full px-2.5 py-1 text-caption font-semibold ${platformTone[r.platform]}`}>
 
                     {r.platform}
                   </span>
@@ -179,7 +179,7 @@ export function Reviews() {
                   {existingReplies.map((rp, idx) =>
                   <div key={idx} className="rounded-xl border border-line bg-canvas px-4 py-3">
                         <p className="text-sm leading-6 text-ink">{rp.text}</p>
-                        <span className="mt-1 block text-[11px] text-meta">Posted {rp.when}</span>
+                        <span className="mt-1 block text-caption text-meta">Posted {rp.when}</span>
                       </div>
                   )}
 

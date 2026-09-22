@@ -192,7 +192,7 @@ function RefundsBoard() {
             accent="amber"
             badge={
             r.locked ?
-            <span className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-1 text-[11px] font-semibold text-meta">
+            <span className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-1 text-caption font-semibold text-meta">
                     <LockIcon className="h-3 w-3" />
                     Owner only
                   </span> :

@@ -1,9 +1,14 @@
 const API_BASE = '/api/v1';
 const TOKEN_KEY = 'mesa_token';
+const REFRESH_KEY = 'mesa_refresh_token';
 const USER_KEY = 'mesa_user';
 const DEVICE_KEY = 'mesa_device_id';
 
 let accessToken = localStorage.getItem(TOKEN_KEY) || null;
+let refreshToken = localStorage.getItem(REFRESH_KEY) || null;
+// Single-flight guard so a burst of parallel 401s (menu, categories, tables,
+// settings all at once) triggers exactly one refresh, not one per caller.
+let refreshInFlight = null;
 
 // Step-up elevation token: held in memory only — never localStorage — so it
 // dies with the tab. It authorizes exactly one privileged action.
@@ -72,6 +77,11 @@ export async function authorizeSession(res) {
   } catch {
     /* fall back to the login payload */
   }
+  const refresh = res.tokens?.refresh_token;
+  if (refresh) {
+    refreshToken = refresh;
+    localStorage.setItem(REFRESH_KEY, refresh);
+  }
   establishSession(res.tokens.access_token, hydrated);
   return hydrated;
 }
@@ -83,6 +93,16 @@ export function clearApiSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   window.dispatchEvent(new Event('mesa-session'));
+}
+
+// A 401 is only worth a token-refresh-and-retry when the failing call is a
+// NORMAL request. If the request is part of the step-up elevation flow it
+// already carries an in-memory elevation token (set by withElevation via
+// setElevationToken); retrying it after a plain refresh won't restore that
+// single-use token, and the elevation endpoint would just 401 again — so skip
+// the refresh leg and surface the 401 to the elevation prompt instead.
+function codeHasElevation() {
+  return Boolean(elevationToken);
 }
 
 async function request(path, opts) {
@@ -97,15 +117,37 @@ async function request(path, opts) {
     headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
+  if (res.status === 401 && !(opts.skipRefresh) && !codeHasElevation(opts)) {
+    const refreshed = await refreshAccessTokenOnce();
+    if (refreshed && (refreshed.status === 200 || refreshed.status === 204)) {
+      // retry the original request with the fresh access token
+      const retry = await fetch(`${API_BASE}${path}`, {
+        method: opts.method || 'GET',
+        headers: {
+          ...headers,
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: opts.body ? JSON.stringify(opts.body) : undefined
+      });
+      res = retry;
+    } else if (refreshed?.status === 401) {
+      // refresh token itself is dead — session truly expired
+      err = new Error('session expired');
+      throw err;
+    }
+    refreshInFlight = null;
+  }
   if (!res.ok) {
     let detail = '';
     let code = '';
     let action = '';
+    let payload = null;
     try {
       const body = await res.json();
       detail = body?.error || '';
       code = body?.code || '';
       action = body?.action || '';
+      payload = body;
     } catch {
       /* non-JSON error body */
     }
@@ -113,6 +155,8 @@ async function request(path, opts) {
     err.status = res.status;
     err.code = code;
     err.action = action;
+    err.body = payload; // structured fields (e.g. pin_locked_until) ride along
+    err.remaining = typeof payload?.remaining === 'number' ? payload.remaining : undefined;
     if (res.status === 401 && !code.startsWith('ELEVATION_')) {
       err.code = code;
     }

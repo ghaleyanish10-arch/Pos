@@ -124,10 +124,10 @@ export function RecipeCosting() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Card>
           <div className="mb-4 flex items-end justify-between">
-            <h2 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">
+            <h2 className="text-base font-bold tracking-tight text-ink">
               Ingredients
             </h2>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-meta">
+            <span className="text-caption font-medium text-meta">
               Per serving
             </span>
           </div>
@@ -173,7 +173,7 @@ export function RecipeCosting() {
         </Card>
 
         <Card className="h-fit">
-          <h2 className="text-base font-extrabold uppercase tracking-[0.08em] text-ink">
+          <h2 className="text-base font-bold tracking-tight text-ink">
             Live cost
           </h2>
 
@@ -187,7 +187,7 @@ export function RecipeCosting() {
           </dl>
 
           <div className="mt-4 border-t border-line pt-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+            <p className="text-caption font-semibold text-meta">
               Plate cost
             </p>
             <p className="mt-1 font-mono text-4xl font-extrabold tracking-tight text-ink">

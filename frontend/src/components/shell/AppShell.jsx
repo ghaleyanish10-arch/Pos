@@ -1,17 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
-import { LogOutIcon, MailCheckIcon, MenuIcon, XIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { LogOutIcon, MenuIcon, StoreIcon, UserRoundIcon, XIcon } from 'lucide-react';
 import { Sidebar } from './Sidebar';
+import { TabletRail } from './TabletRail';
+import { PhoneNav } from './PhoneNav';
 import { SyncChip } from './SyncChip';
 import { ClockIn } from '../../pages/ClockIn';
 import { NotificationBell } from './NotificationBell';
+import { RoleSwitcher } from './RoleSwitcher';
 import { RestrictedState } from '../role/RestrictedState';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { useToast } from '../ui/Toast';
+import { useDevice } from '../../state/DeviceContext';
 import { api } from '../../api/client';
+import { useBackoffInterval } from '../../api/poll';
 import { useNotifications } from '../../state/Notifications';
+import { useSound } from '../../state/SoundContext';
+import { useSettings } from '../../state/SettingsContext';
 import { allNavItems } from '../../data/nav';
-import { canAccess, frontendRole, ROLES, useRole } from '../../state/RoleContext';
+import { canAccess, frontendRole, ROLES, useRole, visibleGroupsFor } from '../../state/RoleContext';
 
 // Reachable without a clocked-in session (terminal has no credentials of its own).
 // /register/customer is a standalone public route outside this shell entirely.
@@ -19,53 +26,12 @@ const PUBLIC_PATHS = new Set([
   '/verify-email',
   '/forgot-password',
   '/reset-password',
-  '/login',
-  '/signup',
   '/auth/callback'
 ]);
 
-// Admin-dashboard paths the backend locks behind email verification for
-// Corporate Admin (owner) accounts. Staff-role terminals stay fully open.
-const ADMIN_DASH_PATHS = new Set([
-  '/team',
-  '/reports',
-  '/marketing',
-  '/online-store',
-  '/fiscal',
-  '/permissions',
-  '/settings',
-  '/audit'
-]);
-
-// Shown to an unverified owner clicking into an admin-dashboard page: the API
-// answers 403 anyway; this makes the reason and the next step visible.
-function VerifyGate({ email }) {
-  return (
-    <div className="mx-auto flex min-h-[60vh] w-full max-w-[440px] flex-col items-center justify-center">
-      <div className="w-full rounded-card border border-line bg-surface p-8 text-center">
-        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-tint-amber text-status-amber">
-          <MailCheckIcon className="h-7 w-7" />
-        </span>
-        <h1 className="mt-4 text-xl font-extrabold tracking-tight text-ink">Verify your email first</h1>
-        <p className="mt-2 text-sm text-meta">
-          We sent a 6-digit code to <span className="font-semibold text-ink">{email || 'your inbox'}</span>.
-          Admin tools unlock once it&apos;s entered.
-        </p>
-        <Link
-          to={`/verify-email${email ? `?email=${encodeURIComponent(email)}` : ''}`}
-          className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-ink px-6 text-sm font-bold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
-          Enter verification code
-        </Link>
-        <p className="mt-3 text-xs text-meta">
-          Staff registers, orders and KDS keep working — only admin pages are gated.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function StaffBadge() {
   const { session, clockOut } = useRole();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState(false);
   const ref = useRef(null);
@@ -96,7 +62,7 @@ function StaffBadge() {
       await clockOut();
     } catch (e) {
       setMsg(false);
-      window.alert(e.message || 'Could not clock out.');
+      toast.error(e.message || 'Could not clock out.');
     }
   };
 
@@ -110,12 +76,12 @@ function StaffBadge() {
         aria-expanded={open}
         title="Profile"
         className="flex h-9 items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1 pr-3 transition-colors duration-150 ease-soft hover:border-ink/30">
-        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-[11px] font-bold text-white">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-caption font-bold text-white">
           {meta.initials}
         </span>
-        <span className="hidden max-w-[140px] text-[13px] font-semibold text-ink sm:block">
+        <span className="hidden max-w-[140px] text-13 font-semibold text-ink sm:block">
           <span className="block truncate leading-tight">{session.name}</span>
-          <span className="block text-[10px] font-medium text-meta">{meta.label}</span>
+          <span className="block text-micro font-medium text-meta">{meta.label}</span>
         </span>
       </button>
 
@@ -124,20 +90,29 @@ function StaffBadge() {
           role="menu"
           className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-2xl border border-line bg-surface shadow-lg">
           <div className="flex items-center gap-3 border-b border-line px-4 py-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-ink text-[11px] font-bold text-white">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-ink text-caption font-bold text-white">
               {meta.initials}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold text-ink">{session.name}</p>
-              <p className="text-[11px] font-medium text-meta">{meta.label}</p>
+              <p className="truncate text-13 font-semibold text-ink">{session.name}</p>
+              <p className="text-caption font-medium text-meta">{meta.label}</p>
             </div>
           </div>
+          <Link
+            to={`/team/${session.id}`}
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-13 font-semibold text-ink transition-colors duration-150 ease-soft hover:bg-canvas">
+            <UserRoundIcon className="h-4 w-4 text-meta" />
+            View profile
+          </Link>
+          <div className="my-1 h-px bg-line" />
           <button
             type="button"
             role="menuitem"
             onClick={logout}
             disabled={msg}
-            className="flex w-full items-center gap-2 px-4 py-3 text-left text-[13px] font-semibold text-red-600 transition-colors duration-150 ease-soft hover:bg-canvas disabled:opacity-60">
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-13 font-semibold text-status-red transition-colors duration-150 ease-soft hover:bg-canvas disabled:opacity-60">
             <LogOutIcon className="h-4 w-4" />
             {msg ? 'Logging out…' : 'Log out'}
           </button>
@@ -156,128 +131,181 @@ function StaffBadge() {
 function OrderAlerts() {
   const { add } = useNotifications();
   const toast = useToast();
+  const { play } = useSound();
   const seen = useRef(null);
 
-  useEffect(() => {
-    const poll = async () => {
-      try {
-        const res = await api('/kds/tickets?status=incoming');
-        const list = res?.data || [];
-        if (seen.current === null) {
-          seen.current = new Set(list.map((t) => t.id));
-          return;
-        }
-        list.forEach((t) => {
-          if (seen.current.has(t.id)) return;
-          seen.current.add(t.id);
-          const where = String(t.table || '').trim()
-            ? `Table ${t.table}`
-            : (t.tag || 'New order');
-          add({
-            type: 'order',
-            title: `New order — ${where}`,
-            body: `${(t.items || []).length} item${(t.items || []).length === 1 ? '' : 's'} sent to the kitchen`
-          });
-          toast.success(`New order — ${where}`);
-        });
-      } catch {
-        /* backend unreachable — stay quiet, Orders/KDS show their own state */
-      }
-    };
-    poll();
-    const id = setInterval(poll, 15000);
-    return () => clearInterval(id);
-  }, [add, toast]);
+  const poll = useCallback(async () => {
+    const res = await api('/kds/tickets?status=incoming');
+    const list = res?.data || [];
+    if (seen.current === null) {
+      seen.current = new Set(list.map((t) => t.id));
+      return;
+    }
+    let arrived = 0;
+    list.forEach((t) => {
+      if (seen.current.has(t.id)) return;
+      seen.current.add(t.id);
+      arrived += 1;
+      const where = String(t.table || '').trim()
+        ? `Table ${t.table}`
+        : (t.tag || 'New order');
+      add({
+        type: 'order',
+        title: `New order — ${where}`,
+        body: `${(t.items || []).length} item${(t.items || []).length === 1 ? '' : 's'} sent to the kitchen`,
+        silent: true // the grouped orderReceived chime covers this batch
+      });
+      toast.success(`New order — ${where}`);
+    });
+    if (arrived > 0) {
+      // One chime for the batch — the bell badge counts every order.
+      play('orderReceived', { groupKey: 'shell-orders' });
+    }
+  }, [add, toast, play]);
+
+  // Polls every 15s; failures back off automatically (the hook backs off on
+  // any thrown error) instead of spamming the dead API.
+  useBackoffInterval(poll, 15000);
 
   return null;
 }
 
 export function AppShell() {
   const [mobileNav, setMobileNav] = useState(false);
-  const [offline, setOffline] = useState(false);
   const { pathname } = useLocation();
-  const { role, session } = useRole();
+  const { role } = useRole();
+  const { settings } = useSettings();
+  const { isPhone, isTablet, isDesktop } = useDevice();
   const current = allNavItems.find((i) => i.path === pathname) ||
     allNavItems.find((i) => i.path !== '/' && pathname.startsWith(i.path + '/'));
   const publicPage = PUBLIC_PATHS.has(pathname);
 
-  // Shared-terminal gate: no staff session means the whole shell is the
-  // clock-in screen — nothing is navigable until someone is on shift.
+  // Breadcrumb trail: group title → current page (or the parent item when a
+  // sub-page like /refunds is open).
+  const crumb = (() => {
+    if (publicPage) return null;
+    for (const g of visibleGroupsFor(role)) {
+      for (const item of g.items) {
+        if (item.path === pathname || (item.path !== '/' && pathname.startsWith(item.path + '/'))) {
+          return { group: g.title, label: item.label };
+        }
+        const child = (item.children || []).find((c) => c.path === pathname);
+        if (child) return { group: g.title, label: item.label, sub: child.label };
+      }
+    }
+    return null;
+  })();
+
+
+  // Shared-terminal gate: without a staff session, /terminal IS the clock-in
+  // screen; any other protected path belongs behind the owner landing page.
   if (!role && !publicPage) {
-    return <ClockIn />;
+    if (pathname === '/terminal') return <ClockIn />;
+    return <Navigate to="/" replace />;
+  }
+
+  // Already clocked in but wandered back to the terminal route: the shift is
+  // live, so the dashboard is where they belong.
+  if (role && pathname === '/terminal') {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Public auth flows own the full viewport — no app header/rail/nav. They
+  // carry their own brand chrome (see components/auth/AuthChrome).
+  if (publicPage) {
+    return (
+      <div className="flex h-full w-full">
+        <ErrorBoundary key={pathname}>
+          <Outlet />
+        </ErrorBoundary>
+      </div>
+    );
   }
 
   const allowed = publicPage || canAccess(role, pathname);
 
-  // Owner-realm verify gate: an unverified Corporate Admin can still run the
-  // terminal, but admin-dashboard pages show the verification prompt instead.
-  const adminPath = [...ADMIN_DASH_PATHS].some(
-    (p) => pathname === p || pathname.startsWith(p + '/')
-  );
-  const verifyGate = role === 'boss' && session?.email_verified === false && adminPath;
+  const pageLabel = crumb?.sub || crumb?.label || settings.name || 'Mesa OS';
+  const crumbHome = settings.name || 'Mesa OS';
 
   return (
     <div className="flex h-full w-full bg-canvas">
       <OrderAlerts />
-      <div className="hidden lg:block">
-        <Sidebar />
-      </div>
+      {isDesktop && <Sidebar />}
+      {isTablet && <TabletRail />}
 
-      {mobileNav &&
-      <div className="fixed inset-0 z-50 flex lg:hidden">
+      {mobileNav && isPhone &&
+        <div className="fixed inset-0 z-50 flex lg:hidden">
           <div
-          className="absolute inset-0 bg-ink/30"
-          onClick={() => setMobileNav(false)}
-          aria-hidden="true" />
-        
-          <div className="relative">
-            <Sidebar onNavigate={() => setMobileNav(false)} />
+            className="absolute inset-0 bg-ink/30"
+            onClick={() => setMobileNav(false)}
+            aria-hidden="true" />
+
+          <div className="relative w-[86vw] max-w-[320px]">
+            <Sidebar forceExpanded onNavigate={() => setMobileNav(false)} />
+            <button
+              type="button"
+              onClick={() => setMobileNav(false)}
+              aria-label="Close navigation"
+              className="absolute right-2 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-surface text-meta transition-colors duration-150 ease-soft hover:text-ink lg:hidden">
+              <XIcon className="h-4 w-4" />
+            </button>
           </div>
         </div>
       }
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-line bg-canvas/90 px-4 backdrop-blur lg:px-8">
+      <div className={`flex min-w-0 flex-1 flex-col ${isTablet ? 'ml-[72px]' : ''}`}>
+        <header className={`sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-line bg-canvas/90 backdrop-blur ${
+          isPhone ? 'px-4' : isTablet ? 'px-6' : 'px-8'
+        }`}>
           <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setMobileNav((v) => !v)}
-              className="rounded-lg border border-line bg-surface p-2 text-ink lg:hidden"
-              aria-label="Toggle navigation">
-              
-              {mobileNav ? <XIcon className="h-4 w-4" /> : <MenuIcon className="h-4 w-4" />}
-            </button>
+            {isPhone && (
+              <button
+                type="button"
+                onClick={() => setMobileNav((v) => !v)}
+                className="rounded-lg border border-line bg-surface p-2 text-ink"
+                aria-label="Toggle navigation">
+                {mobileNav ? <XIcon className="h-4 w-4" /> : <MenuIcon className="h-4 w-4" />}
+              </button>
+            )}
             <nav aria-label="Breadcrumb" className="min-w-0 truncate text-sm">
-              <Link to="/" className="text-meta hover:text-ink">
-                Mesa OS
-              </Link>
-              {current &&
-              <>
-                  <span className="px-1.5 text-meta">/</span>
-                  <span className="font-semibold text-ink">{current.label}</span>
+              {isPhone ? (
+                <span className="font-semibold text-ink">{pageLabel}</span>
+              ) : (
+                <>
+                  <Link to="/" className="text-meta hover:text-ink">
+                    {crumbHome}
+                  </Link>
+                  {crumb &&
+                    <>
+                      <span className="px-1.5 text-meta">/</span>
+                      <span className="text-meta">{crumb.group}</span>
+                      <span className="px-1.5 text-meta">/</span>
+                      <span className="font-semibold text-ink">{crumb.sub || crumb.label}</span>
+                    </>
+                  }
                 </>
-              }
+              )}
             </nav>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            <SyncChip offline={offline} onToggle={() => setOffline((o) => !o)} />
-            <button
-              type="button"
-              onClick={() => setOffline((o) => !o)}
-              className="hidden h-9 items-center rounded-full border border-line bg-surface px-3 text-[13px] font-semibold text-meta transition-colors duration-150 ease-soft hover:text-ink sm:flex">
-              
-              Simulate {offline ? 'online' : 'offline'}
-            </button>
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 lg:flex">
+              <StoreIcon className="h-3.5 w-3.5 shrink-0 text-meta" />
+              <span className="max-w-[180px] truncate text-13 font-semibold text-ink">{settings.businessName}</span>
+            </div>
+            <SyncChip />
             <NotificationBell />
+            {/* Role switching is a desk task — on the phone the StaffBadge menu
+                plus quick-actions sheet already cover identity and moves. */}
+            {!isPhone && <RoleSwitcher />}
             <StaffBadge />
           </div>
         </header>
 
-        <main className="scroll-thin flex-1 overflow-y-auto px-4 py-6 lg:px-8 lg:py-8">
-          {verifyGate ? (
-            <VerifyGate email={session.email} />
-          ) : allowed ? (
+        <main className={`scroll-thin flex-1 overflow-y-auto ${
+          isPhone ? 'px-4 py-5 pb-32' : isTablet ? 'px-6 py-6' : 'px-8 py-8'
+        }`}>
+          {allowed ? (
             <ErrorBoundary key={pathname}>
               <Outlet />
             </ErrorBoundary>
@@ -286,6 +314,8 @@ export function AppShell() {
           )}
         </main>
       </div>
+
+      {isPhone && <PhoneNav />}
     </div>);
 
 }

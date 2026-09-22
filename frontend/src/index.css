@@ -8,6 +8,69 @@
 
 /* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
 
+/*
+ * Design-system primitives. These live in the components layer so that any
+ * utility class on the same element wins (Tailwind emits utilities last).
+ * Keep every new surface/card/menu built on these instead of hand-rolled
+ * class strings.
+ */
+@layer components {
+  /* Small quiet label used for table heads and secondary captions. */
+  .label {
+    @apply text-caption font-semibold text-meta;
+  }
+  .field-label {
+    @apply mb-1.5 block text-13 font-semibold text-meta;
+  }
+  /* Sheet/modal title bar heading (Dialog, Drawer, BottomSheet). */
+  .sheet-title {
+    @apply text-base font-extrabold tracking-tight text-ink;
+  }
+  .input {
+    @apply h-10 w-full rounded-xl border border-line bg-surface px-3 text-sm text-ink transition-colors duration-150 ease-soft placeholder:text-meta hover:border-lineStrong focus:border-ink focus:outline-none;
+  }
+  .input-sm {
+    @apply h-9 rounded-lg px-2.5 text-13;
+  }
+  .chip {
+    @apply h-8 rounded-full border px-3.5 text-13 font-semibold transition-colors duration-150 ease-soft;
+  }
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-xl text-meta transition-colors duration-150 ease-soft hover:bg-canvas hover:text-ink;
+  }
+  .menu-surface {
+    @apply rounded-xl border border-line bg-surface shadow-pop;
+  }
+  .card-surface {
+    @apply rounded-card border border-line bg-surface;
+  }
+  /* Anchor/Link styled as a Button without going through Button.jsx. */
+  .btn {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-colors duration-150 ease-soft disabled:cursor-not-allowed disabled:opacity-55;
+  }
+  .btn-lg {
+    @apply h-11 px-5;
+  }
+  .btn-icon-only {
+    @apply h-9 w-9 px-0;
+  }
+  .btn-primary {
+    @apply border border-ink bg-ink text-white hover:bg-black;
+  }
+  .btn-outline {
+    @apply border border-line bg-white text-ink hover:border-ink/40 hover:bg-canvas;
+  }
+  .btn-ghost {
+    @apply border border-transparent bg-transparent text-meta hover:text-ink;
+  }
+  .btn-danger {
+    @apply border border-status-red bg-status-red text-white hover:bg-status-red/90;
+  }
+  .btn-success {
+    @apply border border-status-green bg-status-green text-white hover:bg-status-green/90;
+  }
+}
+
 html,
 body,
 #root {
@@ -18,18 +81,36 @@ body {
   color: #1c1b19;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Service devices first: kill double-tap zoom/ghost taps and rubber-band
+     overscroll so the register and the floor never "bounce". */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+button {
+  touch-action: manipulation;
 }
 *:focus-visible {
   outline: 2px solid #1c1b19;
   outline-offset: 2px;
+}
+input,
+select,
+textarea,
+button,
+[role='button'] {
+  font: inherit;
 }
 .scroll-thin::-webkit-scrollbar {
   height: 8px;
   width: 8px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: #e8e6e1;
+  background: #dad6ce;
   border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: #8a867e;
 }
 .scroll-thin::-webkit-scrollbar-track {
   background: transparent;

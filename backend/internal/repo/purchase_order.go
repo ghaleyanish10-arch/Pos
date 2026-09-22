@@ -2,7 +2,9 @@ package repo
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mesa-os/backend/internal/model"
 )
@@ -105,6 +107,87 @@ func (r *PurchaseOrderRepo) Create(ctx context.Context, po *model.PurchaseOrder,
 	}
 
 	return tx.Commit(ctx)
+}
+
+// ErrExceedsOrderedQty is returned when a received quantity exceeds what the
+// PO line ordered — a client error, not a server fault.
+var ErrExceedsOrderedQty = fmt.Errorf("received quantity exceeds ordered quantity")
+
+// Receive confirms goods arriving on a purchase order: for every received line
+// it adds the quantity to the matching tracked inventory item (matched by
+// case-insensitive name) and moves the PO to Received or Partially Received.
+// Lines whose ingredient is not tracked in inventory are skipped and counted in
+// the returned skip count so callers can be honest about what was stocked.
+// pgx.ErrNoRows when the PO does not exist; ErrExceedsOrderedQty when a
+// received quantity is too large.
+func (r *PurchaseOrderRepo) Receive(ctx context.Context, id string, received map[string]float64) (*model.PurchaseOrder, int, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM purchase_orders WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return nil, 0, err
+	}
+	if !exists {
+		return nil, 0, pgx.ErrNoRows
+	}
+
+	lines, err := r.GetItems(ctx, id)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	allMatched := true
+	skipped := 0
+	for _, line := range lines {
+		rqty, ok := received[line.Ingredient]
+		if !ok {
+			rqty = line.Qty // lines without an explicit confirmation arrive in full
+		}
+		if rqty < 0 || rqty > line.Qty {
+			return nil, 0, fmt.Errorf("%w: %s (received %.2f, ordered %.2f)", ErrExceedsOrderedQty, line.Ingredient, rqty, line.Qty)
+		}
+		if rqty <= 0 {
+			continue
+		}
+		if rqty != line.Qty {
+			allMatched = false
+		}
+
+		tag, err := tx.Exec(ctx,
+			`UPDATE inventory_items
+			 SET stock = stock + $1, unit_cost = CASE WHEN $2 > 0 THEN $2 ELSE unit_cost END, restocked_at = now()
+			 WHERE id = (SELECT id FROM inventory_items WHERE lower(name) = lower($3) ORDER BY created_at LIMIT 1)`,
+			rqty, line.UnitCost, line.Ingredient,
+		)
+		if err != nil {
+			return nil, 0, err
+		}
+		if tag.RowsAffected() == 0 {
+			skipped++
+		}
+	}
+
+	status := "Received"
+	if !allMatched {
+		status = "Partially Received"
+	}
+	if _, err := tx.Exec(ctx, `UPDATE purchase_orders SET status = $1 WHERE id = $2`, status, id); err != nil {
+		return nil, 0, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, err
+	}
+
+	po, err := r.GetByID(ctx, id)
+	if err != nil {
+		return nil, 0, err
+	}
+	return po, skipped, nil
 }
 
 func (r *PurchaseOrderRepo) UpdateStatus(ctx context.Context, id, status string) error {

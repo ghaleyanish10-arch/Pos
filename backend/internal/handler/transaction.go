@@ -16,6 +16,22 @@ type TransactionHandler struct {
 	mailer *mailer.Mailer
 }
 
+// paymentMethods is the allowlist of tender types the POS accepts. The
+// frontend sends lowercase values (cash/card/qr/split/esewa/khalti/imepay);
+// values are normalized to lowercase before this check.
+var paymentMethods = map[string]bool{
+	"cash":    true,
+	"card":    true,
+	"qr":      true,
+	"split":   true,
+	"esewa":   true,
+	"khalti":  true,
+	"imepay":  true,
+	"fonepay": true,
+	"wallet":  true,
+	"bank":    true,
+}
+
 func NewTransactionHandler(r *repo.TransactionRepo) *TransactionHandler {
 	return &TransactionHandler{repo: r}
 }
@@ -44,19 +60,55 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than zero"})
+		return
+	}
+	req.Method = strings.ToLower(strings.TrimSpace(req.Method))
+	if !paymentMethods[req.Method] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported payment method: " + req.Method})
+		return
+	}
+	if req.OrderID != "" {
+		if !validUUID(req.OrderID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "order_id must be a valid UUID"})
+			return
+		}
+		if h.orders != nil {
+			if _, err := h.orders.GetByID(c.Request.Context(), req.OrderID); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "order not found"})
+				return
+			}
+		}
+	}
+
 	branchID, _ := c.Get("branch_id")
+	branch := ""
+	if s, ok := branchID.(string); ok {
+		branch = s
+	}
 
 	tx := &model.Transaction{
-		OrderID:  &req.OrderID,
-		Ref:      req.Ref,
-		Method:   req.Method,
-		Amount:   req.Amount,
-		BranchID: strPtr(branchID.(string)),
+		OrderID:   &req.OrderID,
+		Ref:       req.Ref,
+		Method:    req.Method,
+		Amount:    req.Amount,
+		SplitID:   req.SplitID,
+		SplitNote: req.SplitNote,
+		BranchID:  strPtr(branch),
 	}
 
 	if err := h.repo.Create(c.Request.Context(), tx); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Best-effort: this app settles a table's full open tab in one shot and
+	// has no partial-payment tracking, so any transaction carrying an
+	// order_id means that order is paid — close it so the floor plan
+	// derives the table back to 'Open'.
+	if req.OrderID != "" && h.orders != nil {
+		_ = h.orders.Update(c.Request.Context(), req.OrderID, "closed")
 	}
 
 	c.JSON(http.StatusCreated, tx)
@@ -120,12 +172,26 @@ func (h *TransactionHandler) ManualPayment(c *gin.Context) {
 		return
 	}
 
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than zero"})
+		return
+	}
+	req.Method = strings.ToLower(strings.TrimSpace(req.Method))
+	if !paymentMethods[req.Method] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported payment method: " + req.Method})
+		return
+	}
+
 	branchID, _ := c.Get("branch_id")
+	branch := ""
+	if s, ok := branchID.(string); ok {
+		branch = s
+	}
 
 	tx := &model.Transaction{
 		Method:   req.Method,
 		Amount:   req.Amount,
-		BranchID: strPtr(branchID.(string)),
+		BranchID: strPtr(branch),
 	}
 
 	if err := h.repo.Create(c.Request.Context(), tx); err != nil {

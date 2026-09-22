@@ -30,7 +30,7 @@ export function BoardCard({
       
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-[15px] font-bold text-ink">{id}</h3>
+          <h3 className="text-15 font-bold text-ink">{id}</h3>
           {tag && <Pill tone={tagTone}>{tag}</Pill>}
           {badge}
         </div>
@@ -82,7 +82,7 @@ export function Column({
       <header className="mb-3 flex items-center justify-between gap-2 px-1 pt-1">
         <div className="flex items-center gap-2">
           <StatusDot tone={tone} />
-          <h2 className="text-xs font-extrabold uppercase tracking-[0.1em] text-ink">
+          <h2 className="text-xs font-semibold text-ink">
             {title}
           </h2>
           <span className="font-mono text-xs font-bold text-meta">{count}</span>

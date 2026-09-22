@@ -9,7 +9,7 @@ import { useMenu } from '../state/MenuContext';
 import { useSettings } from '../state/SettingsContext';
 import { campaignPhase, phaseWindow, phaseNext } from '../state/CampaignContext';
 
-const toNum = (price) => Number(String(price).replace(/\D/g, ''));
+const toNum = (price) => Number(String(price).replace(/[^0-9.]/g, ''));
 const fmt = (n) => `Rs ${n.toLocaleString('en-IN')}`;
 
 const allergenNotes = {
@@ -138,14 +138,25 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
   });
 
   const count = cart.reduce((s, l) => s + l.qty, 0);
-  const subtotal = cart.reduce((s, l) => s + l.qty * toNum(l.price), 0);
+  const subtotal = cart.reduce((s, l) => s + l.qty * l.price, 0);
   const qtyOf = (name) => cart.find((l) => l.name === name)?.qty ?? 0;
+
+  // The 15% pre-order offer is a real discount: the campaigned dish is priced
+  // at 85% of the menu price whenever a pre-order is being taken, so the price
+  // shown and charged matches the promotional copy.
+  const dishPrice = (item) => {
+    const base = item.priceNum ?? toNum(item.price);
+    if (phase === 'preorder' && campaign?.dish && item.name === campaign.dish) {
+      return Math.round(base * 0.85 * 100) / 100;
+    }
+    return base;
+  };
 
   const add = (item) =>
     setCart((c) => {
       const e = c.find((l) => l.name === item.name);
       if (e) return c.map((l) => (l.name === item.name ? { ...l, qty: l.qty + 1 } : l));
-      return [...c, { id: item.id || '', name: item.name, price: toNum(item.price), category: item.category, qty: 1 }];
+      return [...c, { id: item.id || '', name: item.name, price: dishPrice(item), category: item.category, qty: 1 }];
     });
 
   const inc = (name) => setCart((c) => c.map((l) => (l.name === name ? { ...l, qty: l.qty + 1 } : l)));
@@ -153,12 +164,9 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
     setCart((c) => c.map((l) => (l.name === name ? { ...l, qty: l.qty - 1 } : l)).filter((l) => l.qty > 0));
 
   const placeOrder = () => {
-    toast(
-      table
-        ? `Order received for Table ${table} · ${count} item${count === 1 ? '' : 's'} · ${fmt(subtotal)}`
-        : `Order received · ${count} item${count === 1 ? '' : 's'} · ${fmt(subtotal)}`,
-      { tone: 'green' }
-    );
+    // No success toast here — the parent owns the POST and reports the real
+    // outcome (sent / kept locally / rejected). Claiming success before the
+    // order reaches the server is exactly the dishonesty this avoids.
     onOrderPlaced?.(cart.map((l) => ({ ...l })), subtotal, { table });
     setCart([]);
     setCartOpen(false);
@@ -196,11 +204,11 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
   const campaignBody = campaignLive ? (
     <div className="space-y-4">
       <div className="rounded-2xl border border-ink/20 bg-ink p-5 text-white">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/60">
+        <p className="text-caption font-semibold text-white/60">
           {phaseName} · {campaign.channel}
         </p>
         <p className="mt-1 text-xl font-extrabold">
-          {campaign.dish ? `${campaign.dish}${promotedDish ? ` · ${promotedDish.price}` : ''}` : campaign.name}
+          {campaign.dish ? `${campaign.dish}${promotedDish ? ` · ${phase === 'preorder' ? fmt(dishPrice(promotedDish)) : promotedDish.price}` : ''}` : campaign.name}
         </p>
         <p className="mt-1 text-xs text-white/60">
           {campWindow || 'No dates set'} · pre-orders {phase === 'preview' ? 'open on launch' : phase === 'preorder' ? 'open now' : 'available now'}
@@ -267,19 +275,19 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
               <MegaphoneIcon className="h-4 w-4" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/60">
+              <p className="text-caption font-semibold text-white/60">
                 Marketing · {campaign.channel}
               </p>
-              <p className="mt-0.5 truncate text-[13px] font-extrabold">
+              <p className="mt-0.5 truncate text-13 font-extrabold">
                 {campaign.dish ? `${campaign.dish} — ${campaign.name}` : campaign.name}
               </p>
-              <p className="truncate text-[11px] text-white/60">
+              <p className="truncate text-caption text-white/60">
                 {phaseName}
                 {campaign.dish && phase === 'preorder' && <> · 15% off pre-orders</>}
                 {campWindow && <> · {campWindow}</>}
               </p>
             </div>
-            <span className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/70">
+            <span className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-caption font-semibold text-white/70">
               {phase === 'preview' ? 'Preview' : phase === 'preorder' ? 'Pre-order' : 'Order'}
             </span>
           </div>
@@ -339,12 +347,12 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
               <p className="truncate text-sm font-bold text-ink">{item.name}</p>
               <p className="font-mono text-xs text-meta">{item.price}</p>
               {!item.available && (
-                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-status-red">
+                <p className="mt-0.5 text-caption font-semibold text-status-red">
                   Sold out
                 </p>
               )}
               {item.available && effectiveShowAllergens && allergenNotes[item.name] && (
-                <p className="mt-0.5 text-[10px] font-medium text-status-amber">
+                <p className="mt-0.5 text-micro font-medium text-status-amber">
                   {allergenNotes[item.name]}
                 </p>
               )}

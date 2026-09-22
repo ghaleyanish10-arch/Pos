@@ -1,23 +1,24 @@
-export function StatCard({ label, value, meta }) {
+export function StatCard({ label, value, meta, icon }) {
   return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3.5">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
-        {label}
-      </p>
-      <p className="mt-1.5 text-2xl font-extrabold tracking-tight text-ink">
+    <div className="rounded-card border border-line bg-surface px-4 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-13 font-semibold text-meta">{label}</p>
+        {icon || null}
+      </div>
+      <p className="mt-2 font-mono text-2xl font-extrabold tracking-tight text-ink">
         {value}
       </p>
-      {meta && <p className="mt-0.5 text-xs text-meta">{meta}</p>}
-    </div>);
-
+      {meta && <p className="mt-1 text-caption font-medium text-meta">{meta}</p>}
+    </div>
+  );
 }
 
-export function StatRow({ stats }) {
+export function StatRow({ stats, className = '' }) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {stats.map((s) =>
-      <StatCard key={s.label} {...s} />
-      )}
-    </div>);
-
+    <div className={`grid grid-cols-2 gap-3 lg:grid-cols-4 ${className}`}>
+      {stats.map((s) => (
+        <StatCard key={s.label} {...s} />
+      ))}
+    </div>
+  );
 }

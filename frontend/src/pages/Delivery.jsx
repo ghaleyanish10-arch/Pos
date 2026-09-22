@@ -37,7 +37,7 @@ function Body({ order }) {
 function Timeline({ stage }) {
   return (
     <div className="mt-3 rounded-xl border border-line bg-canvas p-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-meta">
+      <p className="mb-2 text-caption font-semibold text-meta">
         Order progress
       </p>
       <div className="flex items-center gap-0">
@@ -48,7 +48,7 @@ function Timeline({ stage }) {
             <React.Fragment key={s}>
               <div className="flex flex-col items-center gap-1">
                 <span
-                  className={`flex h-5 w-5 items-center justify-center rounded-full border-2 text-[10px] font-bold ${
+                  className={`flex h-5 w-5 items-center justify-center rounded-full border-2 text-micro font-bold ${
                     isDone
                       ? 'border-status-green bg-status-green text-white'
                       : isCurrent
@@ -57,7 +57,7 @@ function Timeline({ stage }) {
                   }`}>
                   {isDone ? <CheckIcon className="h-3 w-3" /> : idx + 1}
                 </span>
-                <span className={`text-[10px] font-semibold ${isCurrent ? 'text-ink' : 'text-meta'}`}>
+                <span className={`text-micro font-semibold ${isCurrent ? 'text-ink' : 'text-meta'}`}>
                   {s}
                 </span>
               </div>
@@ -83,7 +83,7 @@ function DeclineDropdown({ value, onChange }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-semibold text-ink hover:border-ink/40">
+        className="flex h-8 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-13 font-semibold text-ink hover:border-ink/40">
         {value || 'Select reason'}
         <ChevronDownIcon className="h-3.5 w-3.5 text-meta" />
       </button>

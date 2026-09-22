@@ -87,12 +87,73 @@ func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 		return
 	}
 
+	if req.Delta == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "adjustment delta cannot be zero"})
+		return
+	}
+
 	if err := h.repo.AdjustStock(c.Request.Context(), c.Param("id"), req.Delta); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "stock adjusted"})
+}
+
+// Summary powers the Inventory exception board: bucket counts + stock value.
+func (h *InventoryHandler) Summary(c *gin.Context) {
+	branchID := c.Query("branch_id")
+	s, err := h.repo.Summary(c.Request.Context(), branchID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, s)
+}
+
+// RecordWaste writes off stock (spoiled, broken, staff meal…) — the stock
+// decrement and the waste row commit together.
+func (h *InventoryHandler) RecordWaste(c *gin.Context) {
+	var req model.RecordWasteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !validUUID(req.ItemID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id must be a valid UUID"})
+		return
+	}
+	ctx := c.Request.Context()
+	if ok, err := h.repo.Exists(ctx, req.ItemID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	} else if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "inventory item not found"})
+		return
+	}
+
+	actor, _ := c.Get("user_id")
+	w := &model.WasteEntry{
+		ItemID:    req.ItemID,
+		Qty:       req.Qty,
+		Reason:    req.Reason,
+		CreatedBy: actorString(actor),
+	}
+	if err := h.repo.RecordWaste(ctx, w, 0); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, w)
+}
+
+func (h *InventoryHandler) WasteLog(c *gin.Context) {
+	entries, err := h.repo.WasteLog(c.Request.Context(), limitParam(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": entries})
 }
 
 func (h *InventoryHandler) ReorderSuggestions(c *gin.Context) {

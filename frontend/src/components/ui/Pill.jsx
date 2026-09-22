@@ -1,10 +1,10 @@
 const toneText = {
-  blue: 'text-status-blue bg-tint-blue',
-  amber: 'text-status-amber bg-tint-amber',
-  green: 'text-status-green bg-tint-green',
-  red: 'text-status-red bg-tint-red',
-  purple: 'text-status-purple bg-tint-purple',
-  neutral: 'text-meta bg-canvas'
+  blue: 'text-status-blue bg-tint-blue border-tintBorder-blue',
+  amber: 'text-status-amber bg-tint-amber border-tintBorder-amber',
+  green: 'text-status-green bg-tint-green border-tintBorder-green',
+  red: 'text-status-red bg-tint-red border-tintBorder-red',
+  purple: 'text-status-purple bg-tint-purple border-tintBorder-purple',
+  neutral: 'text-meta bg-canvas border-line'
 };
 
 const dotColor = {
@@ -36,7 +36,7 @@ export function Pill({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.06em] ${toneText[tone]} ${className}`}>
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${toneText[tone]} ${className}`}>
       
       {dot && <StatusDot tone={tone} />}
       {children}
@@ -46,7 +46,7 @@ export function Pill({
 
 export function AIBadge({ label = 'AI' }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-tint-purple px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-status-purple">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-tintBorder-purple bg-tint-purple px-2.5 py-0.5 text-xs font-bold text-status-purple">
       <span className="h-2 w-2 rounded-full bg-status-purple" aria-hidden="true" />
       {label}
     </span>);
@@ -60,9 +60,9 @@ const typeLabel = {
 };
 
 const typeTone = {
-  dine: 'text-status-blue bg-tint-blue',
-  takeaway: 'text-status-amber bg-tint-amber',
-  delivery: 'text-status-green bg-tint-green'
+  dine: 'text-status-blue bg-tint-blue border-tintBorder-blue',
+  takeaway: 'text-status-amber bg-tint-amber border-tintBorder-amber',
+  delivery: 'text-status-green bg-tint-green border-tintBorder-green'
 };
 
 export function TypeBadge({ type = 'dine-in' }) {
@@ -73,7 +73,7 @@ export function TypeBadge({ type = 'dine-in' }) {
       : 'dine';
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] ${typeTone[key]}`}>
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${typeTone[key]}`}>
       {typeLabel[key]}
     </span>);
 

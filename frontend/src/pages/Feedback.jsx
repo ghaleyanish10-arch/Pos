@@ -175,7 +175,7 @@ export function Feedback() {
 
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex items-center gap-2.5">
-                    <h3 className="text-[15px] font-bold text-ink">{s.guest}</h3>
+                    <h3 className="text-15 font-bold text-ink">{s.guest}</h3>
                     <Pill tone="neutral">{s.table}</Pill>
                     <span className="flex items-center gap-0.5">
                       {Array.from({ length: 5 }).map((_, i) =>
@@ -225,7 +225,7 @@ export function Feedback() {
         <div>
           <SectionHeader index="02" title="Guest survey" descriptor="What guests see" />
           <div className="rounded-card border border-line bg-surface p-5">
-            <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+            <p className="mb-4 text-caption font-semibold text-meta">
               Scanned from the table QR
             </p>
             <SurveyPreview />
@@ -264,7 +264,7 @@ export function Feedback() {
         {activeItem &&
           <div className="flex flex-col gap-5">
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Rating</p>
+              <p className="mb-2 text-caption font-semibold text-meta">Rating</p>
               <span className="flex items-center gap-0.5">
                 {Array.from({ length: 5 }).map((_, i) =>
                   <StarIcon
@@ -277,20 +277,20 @@ export function Feedback() {
             </div>
 
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Feedback</p>
+              <p className="mb-2 text-caption font-semibold text-meta">Feedback</p>
               <p className="text-sm leading-6 text-ink">{activeItem.comment}</p>
             </div>
 
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Staff notes</p>
+              <p className="mb-2 text-caption font-semibold text-meta">Staff notes</p>
               <div className="space-y-3">
                 {(activeItem.staffNotes || []).map((note, idx) =>
                   <div key={idx} className="rounded-xl border border-line bg-canvas px-4 py-3">
                     <p className="text-sm leading-6 text-ink">{note.text}</p>
                     <div className="mt-1 flex items-center gap-2">
-                      <span className="text-[11px] font-semibold text-meta">{note.author}</span>
-                      <span className="text-[11px] text-meta">·</span>
-                      <span className="text-[11px] text-meta">{note.when}</span>
+                      <span className="text-caption font-semibold text-meta">{note.author}</span>
+                      <span className="text-caption text-meta">·</span>
+                      <span className="text-caption text-meta">{note.when}</span>
                     </div>
                   </div>
                 )}

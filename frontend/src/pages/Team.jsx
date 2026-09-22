@@ -1,24 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CalendarDaysIcon,
-  EyeIcon,
   MessageSquareIcon,
   PencilIcon,
+  SearchXIcon,
   SendIcon,
   TrashIcon,
-  UserCheckIcon,
   UserPlusIcon,
-  UserXIcon } from 'lucide-react';
+  UserRoundIcon,
+  UserXIcon,
+  UsersIcon } from
+'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Pill } from '../components/ui/Pill';
 import { Drawer } from '../components/ui/Drawer';
-import { Field, FilterChips, Toggle, inputClass } from '../components/ui/Controls';
-import { ActionMenu } from '../components/ui/ActionMenu';
-import { HoverCard, HoverCardContent } from '../components/ui/HoverCard';
+import { DetailDrawer, DetailSection } from '../components/ui/DetailDrawer';
+import { EmptyState } from '../components/ui/EmptyState';
+import { Field, FilterChips, SearchInput, Toggle, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
-import { shifts, staff, weekDays, laborBudget } from '../data/manage';
+import { shifts as shiftsData, staff as staffData, weekDays, laborBudget } from '../data/manage';
 import { initials, roleFill, roleTone, shiftCount, weeklyHours } from '../data/staff';
 import api from '../api/client';
 
@@ -28,8 +30,9 @@ const toStaffMember = (item) => ({
   id: item.id,
   name: item.name,
   role: item.role || '',
-  email: '',
-  phone: '',
+  email: item.email || '',
+  phone: item.phone || '',
+  hasPin: !!item.has_pin,
   station: '',
   joined: '',
   active: true
@@ -50,17 +53,22 @@ const seedThread = (person) => [
 ];
 
 const changedStaff = [
-{ name: 'Riya Sharma', role: 'Waiter', change: '+2h moved to Thu' },
-{ name: 'Kiran Lama', role: 'Kitchen', change: 'Added Sat shift' },
-{ name: 'Prakash Adhikari', role: 'Bar', change: '-1h removed from Wed' }];
+  { name: 'Riya Sharma', role: 'Waiter', change: '+2h moved to Thu' },
+  { name: 'Kiran Lama', role: 'Kitchen', change: 'Added Sat shift' },
+  { name: 'Prakash Adhikari', role: 'Bar', change: '-1h removed from Wed' }];
 
 export function Team() {
   const [selected, setSelected] = useState(null);
+  const [detail, setDetail] = useState(null);
   const toast = useToast();
   const navigate = useNavigate();
 
-  const [team, setTeam] = useState(staff);
-  const [schedule, setSchedule] = useState(shifts);
+  const [team, setTeam] = useState(staffData);
+  const [schedule, setSchedule] = useState(shiftsData);
+  const [loadState, setLoadState] = useState('loading'); // loading | ready | error
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('All roles');
+
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [weekRange, setWeekRange] = useState('This week');
   const [notifyTeam, setNotifyTeam] = useState(true);
@@ -73,6 +81,7 @@ export function Team() {
 
   useEffect(() => {
     let cancelled = false;
+    setLoadState('loading');
     (async () => {
       try {
         const [staffRes, shiftsRes] = await Promise.all([
@@ -82,10 +91,12 @@ export function Team() {
         if (cancelled) return;
         const members = staffRes?.data || [];
         if (members.length > 0) setTeam(members.map(toStaffMember));
-        const shiftsData = shiftsRes?.data || [];
-        if (staffRes) setSchedule(shiftsData.map(toShift));
+        const shiftsList = shiftsRes?.data || [];
+        if (staffRes && Array.isArray(shiftsList)) setSchedule(shiftsList.map(toShift));
+        setLoadState('ready');
       } catch {
-        /* keep static demo data as fallback */
+        if (cancelled) return;
+        setLoadState('ready'); // demo roster keeps the page usable offline
       }
     })();
     return () => { cancelled = true; };
@@ -93,6 +104,26 @@ export function Team() {
 
   const activeStaff = team.filter((p) => p.active !== false);
   const deactivatedStaff = team.filter((p) => p.active === false);
+
+  const rolesPresent = useMemo(
+    () => ['All roles', ...[...new Set(team.map((p) => p.role).filter(Boolean))]],
+    [team]
+  );
+
+  // Filtered roster: search + role + status in one pass.
+  const filteredActive = useMemo(() => {
+    const q = query.toLowerCase();
+    return activeStaff.filter((p) =>
+      (!q || p.name.toLowerCase().includes(q) || p.role.toLowerCase().includes(q)) &&
+      (roleFilter === 'All roles' || p.role === roleFilter));
+  }, [activeStaff, query, roleFilter]);
+
+  const filteredDeactivated = useMemo(() => {
+    const q = query.toLowerCase();
+    return deactivatedStaff.filter((p) =>
+      (!q || p.name.toLowerCase().includes(q) || p.role.toLowerCase().includes(q)) &&
+      (roleFilter === 'All roles' || p.role === roleFilter));
+  }, [deactivatedStaff, query, roleFilter]);
 
   const totalScheduled = schedule.reduce((s, sh) => {
     const [a, b] = sh.time.split('–').map(Number);
@@ -103,18 +134,18 @@ export function Team() {
 
   const openAddStaff = () => {
     setEditingStaff(null);
-    setForm({ name: '', role: 'Cashier', email: '', phone: '', station: 'Main floor', pin: '' });
+    setForm({ name: '', role: 'Cashier', email: '', phone: '', station: 'Main floor', pin: '', rate: '' });
     setStaffDrawer(true);
   };
 
   const openEditStaff = (person) => {
     setEditingStaff(person);
-    setForm({ name: person.name, role: person.role, email: person.email, phone: person.phone, station: person.station, pin: '' });
+    setForm({ name: person.name, role: person.role, email: person.email, phone: person.phone, station: person.station, pin: '', rate: person.rate ?? '' });
     setStaffDrawer(true);
   };
 
   const nextStaffId = 'MST-' +
-    (Math.max(...team.map((p) => parseInt(p.id.split('-')[1], 10) || 0)) + 1);
+    (Math.max(...team.map((p) => parseInt(String(p.id).split('-')[1], 10) || 0)) + 1);
 
   const saveStaff = () => {
     if (!form?.name.trim()) {
@@ -128,13 +159,20 @@ export function Team() {
     }
     const payload = { name: form.name.trim(), role: form.role, email: form.email?.trim() || '' };
     if (pin) payload.pin = pin;
+    const rateNum = Number(form.rate);
+    const rate = form.rate !== '' && !Number.isNaN(rateNum) && rateNum >= 0 ? rateNum : null;
     if (editingStaff) {
       setTeam((prev) =>
         prev.map((p) => (p.name === editingStaff.name ? { ...p, ...form } : p)));
       toast(`${form.name} updated`, { tone: 'green' });
       if (editingStaff.id) {
         api(`/staff/${editingStaff.id}`, { method: 'PUT', body: { name: payload.name, role: payload.role } }).catch(() => {});
+        // Hourly rate rides its own payroll endpoint (manager-gated server-side).
+        if (rate !== null) {
+          api(`/staff/${editingStaff.id}/rate`, { method: 'PUT', body: { rate } }).catch(() => {});
+        }
       }
+      setDetail((d) => (d && d.name === editingStaff.name ? { ...d, ...form } : d));
     } else {
       const created = { ...form, id: nextStaffId, joined: 'Sep 2026' };
       setTeam((prev) => [...prev, created]);
@@ -159,19 +197,21 @@ export function Team() {
       prev.map((p) => (p.name === person.name ? { ...p, active: false } : p)));
     setSchedule((prev) => prev.filter((s) => s.staff !== person.name));
     if (message?.name === person.name) setMessage(null);
+    if (detail?.name === person.name) setDetail((d) => ({ ...d, active: false }));
     toast(`${person.name} deactivated · ${removedShifts} shift${removedShifts === 1 ? '' : 's'} removed`, { tone: 'red' });
   };
 
   const reactivate = (person) => {
     setTeam((prev) =>
       prev.map((p) => (p.name === person.name ? { ...p, active: true } : p)));
+    if (detail?.name === person.name) setDetail((d) => ({ ...d, active: true }));
     toast(`${person.name} reactivated — reassign shifts`, { tone: 'green' });
   };
 
-  const shiftForm = (selected) => ({
-    start: selected?.shift?.time.split('–')[0] ?? '10',
-    end: selected?.shift?.time.split('–')[1] ?? '18',
-    role: selected?.shift?.role ?? 'Waiter'
+  const shiftForm = (sel) => ({
+    start: sel?.shift?.time.split('–')[0] ?? '10',
+    end: sel?.shift?.time.split('–')[1] ?? '18',
+    role: sel?.shift?.role ?? 'Waiter'
   });
 
   const [shiftDraft, setShiftDraft] = useState(shiftForm(selected));
@@ -273,32 +313,26 @@ export function Team() {
     setDraft('');
   };
 
-  const actionsFor = (person) => {
-    if (person.active === false) {
-      return [
-        { label: 'Reactivate', icon: <UserCheckIcon className="h-4 w-4" />, onClick: () => reactivate(person) },
-        { label: 'Edit details', icon: <PencilIcon className="h-4 w-4" />, onClick: () => openEditStaff(person) }
-      ];
-    }
-    return [
-      { label: 'View profile', icon: <EyeIcon className="h-4 w-4" />, onClick: () => navigate(`/team/${person.id}`) },
-      { label: 'Message', icon: <MessageSquareIcon className="h-4 w-4" />, onClick: () => openMessage(person) },
-      { label: 'Adjust schedule', icon: <CalendarDaysIcon className="h-4 w-4" />, onClick: () => openShift({ staff: person.name, day: 3, shift: null }) },
-      { label: 'Edit details', icon: <PencilIcon className="h-4 w-4" />, onClick: () => openEditStaff(person) },
-      { divider: true },
-      { label: 'Deactivate', icon: <UserXIcon className="h-4 w-4" />, danger: true, onClick: () => deactivate(person) }
-    ];
+  // Clicking a staff member opens the full profile page (attendance history,
+  // weekly stats, clock-ins). The ⋯ button keeps the quick-actions drawer.
+  const openProfile = (person) => {
+    navigate(`/team/${person.id}`);
   };
+
+  const openDetail = (person) => {
+    setDetail(person);
+  };
+
+  const noResults = filteredActive.length === 0 && filteredDeactivated.length === 0;
 
   return (
     <div className="mx-auto w-full max-w-[1400px]">
-      <PageHeader title="Team & Shifts" descriptor="Week of 7–13 September">
-        <Pill tone="green" dot>
-          9 on shift now
-        </Pill>
-        <Pill tone="amber" dot>
-          3 open shifts
-        </Pill>
+      <PageHeader title="Team & Shifts" descriptor={`Week of 7–13 September · ${activeStaff.length} active · ${totalScheduled}h scheduled`}>
+        <SearchInput
+          className="w-[200px]"
+          placeholder="Search staff"
+          value={query}
+          onChange={setQuery} />
         <Button variant="outline" onClick={() => {
           setWeekRange('This week');
           setNotifyTeam(true);
@@ -309,95 +343,120 @@ export function Team() {
         </Button>
       </PageHeader>
 
-      <section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {activeStaff.map((person) => (
-          <div
-            key={person.id}
-            className="flex items-center gap-3 rounded-card border border-line bg-surface p-4">
-            
-            <HoverCard
-              content={
-              <HoverCardContent
-                name={person.name}
-                role={person.role}
-                subtitle={`Staff ID ${person.id} · Payroll group A`}
-                status="active"
-                stats={[
-                { label: 'Shifts', value: shiftCount(person.name, schedule) },
-                { label: 'Hours', value: weeklyHours(person.name, schedule) }]
-                } />
-              }>
-              
-              <span className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-canvas text-xs font-bold text-ink ring-1 ring-line">
-                {person.name.split(' ').map((n) => n[0]).join('')}
+      {loadState === 'error' &&
+      <div className="mb-4 rounded-xl border border-status-amber/30 bg-tint-amber px-4 py-3 text-sm font-semibold text-status-amber">
+          Couldn't reach the server — showing the saved roster.
+        </div>
+      }
+
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <FilterChips
+          ariaLabel="Role filter"
+          options={rolesPresent}
+          value={roleFilter}
+          onChange={setRoleFilter} />
+        <div className="ml-auto flex items-center gap-2">
+          <Pill tone="green" dot>
+            {activeStaff.length} active
+          </Pill>
+          {deactivatedStaff.length > 0 &&
+          <Pill tone="neutral" dot>
+              {deactivatedStaff.length} inactive
+            </Pill>
+          }
+        </div>
+      </div>
+
+      {loadState === 'loading' ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-card border border-line bg-surface p-4">
+              <span className="h-10 w-10 animate-pulse rounded-full bg-canvas" />
+              <span className="flex-1 space-y-2">
+                <span className="block h-3.5 w-3/4 animate-pulse rounded bg-canvas" />
+                <span className="block h-3 w-1/3 animate-pulse rounded bg-canvas" />
               </span>
-            </HoverCard>
-
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
-              <Pill tone={roleTone[person.role]} className="mt-1">{person.role}</Pill>
             </div>
-
-            <ActionMenu
-              label={`Actions for ${person.name}`}
-              actions={actionsFor(person)}
-              />
-          </div>
-        ))}
-      </section>
-
-      <div className="scroll-thin overflow-x-auto rounded-card border border-line bg-surface">
-        <div className="min-w-[920px]">
-          <div className="grid grid-cols-[220px_repeat(7,minmax(0,1fr))] border-b border-line">
-            <div className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
-              Staff
-            </div>
-            {weekDays.map((d, i) =>
-            <div
-              key={d}
-              className={`px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.12em] ${
-              i === 3 ? 'text-ink' : 'text-meta'}`
-              }>
-              
-                {d} {i === 3 && <span className="ml-1 font-mono">10</span>}
+          ))}
+        </div>
+      ) : noResults ? (
+        <EmptyState
+          icon={query ? <SearchXIcon className="h-6 w-6" /> : <UsersIcon className="h-6 w-6" />}
+          title={query ? `No staff match "${query}"` : 'No staff here yet'}
+          description={query
+            ? 'Try a different name or clear the role filter.'
+            : 'Add your first staff member to start scheduling shifts.'}
+          action={query
+            ? <Button variant="outline" size="sm" onClick={() => { setQuery(''); setRoleFilter('All roles'); }}>Clear filters</Button>
+            : <Button variant="dark" size="sm" icon={<UserPlusIcon className="h-4 w-4" />} onClick={openAddStaff}>Add staff</Button>} />
+      ) : (
+        <>
+          <section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {filteredActive.map((person) => (
+              <div
+                key={person.id}
+                onClick={() => openProfile(person)}
+                className="flex cursor-pointer items-center gap-3 rounded-card border border-line bg-surface p-4 transition-colors duration-150 ease-soft hover:border-ink/30">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-canvas text-xs font-bold text-ink ring-1 ring-line">
+                  {initials(person.name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
+                  <Pill tone={roleTone[person.role]} className="mt-1">{person.role}</Pill>
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Actions for ${person.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openDetail(person);
+                  }}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line text-meta transition-colors duration-150 ease-soft hover:border-ink/40 hover:text-ink">
+                  ⋯
+                </button>
               </div>
-            )}
-          </div>
+            ))}
+          </section>
 
-          {activeStaff.map((person) =>
+          {filteredActive.length > 0 &&
+        <div className="scroll-thin overflow-x-auto rounded-card border border-line bg-surface">
+              <div className="min-w-[920px]">
+                <div className="grid grid-cols-[220px_repeat(7,minmax(0,1fr))] border-b border-line">
+                  <div className="px-4 py-3 text-caption font-semibold text-meta">
+                Staff
+                  </div>
+                  {weekDays.map((d, i) =>
+              <div
+                key={d}
+                className={`px-3 py-3 text-caption font-semibold ${
+                i === 3 ? 'text-ink' : 'text-meta'}`}
+                >
+                    {d} {i === 3 && <span className="ml-1 font-mono">10</span>}
+                  </div>
+              )}
+                </div>
+
+                {filteredActive.map((person) =>
           <div
             key={person.name}
             className="grid grid-cols-[220px_repeat(7,minmax(0,1fr))] border-b border-line last:border-b-0">
-            
-              <div className="flex items-center gap-2 px-4 py-3">
-                <HoverCard
-                  content={
-                  <HoverCardContent
-                    name={person.name}
-                    role={person.role}
-                    subtitle={`Staff ID ${person.id}`}
-                    status="active"
-                    stats={[
-                    { label: 'Shifts', value: shiftCount(person.name, schedule) },
-                    { label: 'Hours', value: weeklyHours(person.name, schedule) }]
-                    } />
-                  }>
-                  
-                  <span className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-canvas text-[11px] font-bold text-ink">
-                    {person.name.split(' ').map((n) => n[0]).join('')}
+                <div
+              onClick={() => openProfile(person)}
+              className="flex cursor-pointer items-center gap-2 px-4 py-3 transition-colors duration-150 ease-soft hover:bg-canvas">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-canvas text-caption font-bold text-ink">
+                    {initials(person.name)}
                   </span>
-                </HoverCard>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
-                  <p className="truncate text-[11px] font-medium text-meta">{person.role}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
+                    <p className="truncate text-caption font-medium text-meta">{person.role}</p>
+                  </div>
+                  <span
+                aria-hidden="true"
+                className="shrink-0 text-meta opacity-0 transition-opacity hover:opacity-100">
+                    <PencilIcon className="h-3.5 w-3.5" />
+                  </span>
                 </div>
-                <ActionMenu
-                  size="sm"
-                  label={`Actions for ${person.name}`}
-                  actions={actionsFor(person)}
-                  />
-              </div>
-              {weekDays.map((_, dayIdx) => {
+                {weekDays.map((_, dayIdx) => {
               const shift = schedule.find(
                 (s) => s.staff === person.name && s.day === dayIdx
               );
@@ -407,71 +466,220 @@ export function Team() {
                   type="button"
                   onClick={() => openShift({ staff: person.name, day: dayIdx, shift })}
                   className="border-l border-line p-1.5 text-left transition-colors duration-150 ease-soft hover:bg-canvas">
-                  
-                    {shift ?
+                      {shift ?
                   <span
                     className={`block rounded-lg border px-2.5 py-2 ${roleFill[shift.role]}`}>
-                    
-                        <span className="block font-mono text-[13px] font-bold">
-                          {shift.time}
-                        </span>
-                        <span className="block text-[11px] font-semibold uppercase tracking-[0.06em]">
-                          {shift.role}
-                        </span>
-                      </span> :
-
+                          <span className="block font-mono text-13 font-bold">
+                            {shift.time}
+                          </span>
+                          <span className="block text-caption font-semibold">
+                            {shift.role}
+                          </span>
+                        </span> :
                   <span className="block px-2.5 py-2 text-xs text-meta">+</span>
                   }
-                  </button>);
-
+                    </button>);
             })}
-            </div>
+              </div>
           )}
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        {Object.keys(roleTone).map((r) =>
-        <Pill key={r} tone={roleTone[r]} dot>
-            {r}
-          </Pill>
-        )}
-      </div>
-
-      {deactivatedStaff.length > 0 &&
-      <section className="mt-8 rounded-card border border-dashed border-line bg-surface p-5">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <div className="mr-auto min-w-0">
-              <h2 className="text-sm font-bold text-ink">Deactivated staff</h2>
-              <p className="text-xs text-meta">
-                Removed from all shifts and scheduling — reactivate to restore the profile.
-              </p>
+              </div>
             </div>
-            <Pill tone="neutral">{deactivatedStaff.length}</Pill>
+        }
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {Object.keys(roleTone).map((r) =>
+          <Pill key={r} tone={roleTone[r]} dot>
+                {r}
+              </Pill>
+        )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            {deactivatedStaff.map((person) => (
+          {filteredDeactivated.length > 0 &&
+      <section className="mt-8 rounded-card border border-dashed border-line bg-surface p-5">
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className="mr-auto min-w-0">
+                <h2 className="text-sm font-bold text-ink">Deactivated staff</h2>
+                <p className="text-xs text-meta">
+              Removed from all shifts and scheduling — reactivate to restore the profile.
+                </p>
+              </div>
+              <Pill tone="neutral">{filteredDeactivated.length}</Pill>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              {filteredDeactivated.map((person) => (
               <div
                 key={person.id}
-                className="flex items-center gap-3 rounded-card border border-line bg-canvas p-4 opacity-80">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-line text-xs font-bold text-meta">
-                  {initials(person.name)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
-                  <p className="truncate text-[11px] font-medium text-meta">{person.role}</p>
-                  <Pill tone="neutral" className="mt-1">Inactive</Pill>
+                onClick={() => openProfile(person)}
+                className="flex cursor-pointer items-center gap-3 rounded-card border border-line bg-canvas p-4 opacity-80 transition-colors duration-150 ease-soft hover:border-ink/30">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-line text-xs font-bold text-meta">
+                    {initials(person.name)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink">{person.name}</p>
+                    <p className="truncate text-caption font-medium text-meta">{person.role}</p>
+                    <Pill tone="neutral" className="mt-1">Inactive</Pill>
+                  </div>
+                  <button
+                  type="button"
+                  aria-label={`Actions for ${person.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openDetail(person);
+                  }}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line text-meta hover:border-ink/40 hover:text-ink">
+                  ⋯
+                  </button>
                 </div>
-                <ActionMenu
-                  label={`Actions for ${person.name}`}
-                  actions={actionsFor(person)}
-                  />
-              </div>
             ))}
-          </div>
-        </section>
-      }      <Drawer
+            </div>
+          </section>
+      }
+        </>
+      )}
+
+      {/* Detail drawer — profile + weekly stats + quick actions in one place */}
+      <DetailDrawer
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        title={detail?.name || ''}
+        subtitle={detail ? `${detail.role}${detail.id ? ` · ${detail.id}` : ''}` : ''}
+        footer={
+          detail ? (
+            detail.active === false ? (
+              <div className="flex gap-2 w-full">
+                <Button variant="outline" className="flex-1" onClick={() => setDetail(null)}>Close</Button>
+                <Button variant="green" className="flex-1" onClick={() => reactivate(detail)}>Reactivate</Button>
+              </div>
+            ) : (
+              <div className="flex gap-2 w-full">
+                <Button variant="outline" className="flex-1" onClick={() => setDetail(null)}>Close</Button>
+                <Button
+                  variant="dark"
+                  className="flex-1"
+                  onClick={() => {
+                    openEditStaff(detail);
+                    setDetail(null);
+                  }}>
+                  Edit details
+                </Button>
+              </div>
+            )
+          ) : null
+        }>
+
+        {detail &&
+        <>
+            <div className="flex items-center gap-4">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-canvas text-base font-bold text-ink ring-1 ring-line">
+                {initials(detail.name)}
+              </span>
+              <div className="min-w-0">
+                <Pill tone={detail.active === false ? 'neutral' : roleTone[detail.role] || 'blue'} dot>
+                  {detail.active === false ? 'Inactive' : 'Active'}
+                </Pill>
+                <p className="mt-1.5 text-sm font-semibold text-ink">
+                  {detail.email || 'No email on file'}
+                </p>
+                <p className="text-xs text-meta">{detail.phone || detail.station || '—'}</p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setDetail(null);
+                navigate(`/team/${detail.id}`);
+              }}
+              className="flex w-full items-center justify-between rounded-xl border border-line bg-canvas px-3.5 py-2.5 text-sm font-semibold text-ink transition-colors duration-150 ease-soft hover:border-ink/30">
+              View full profile &amp; attendance
+              <UserRoundIcon className="h-4 w-4 text-meta" aria-hidden="true" />
+            </button>
+
+            <DetailSection title="This week">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl border border-line bg-canvas p-3 text-center">
+                  <p className="font-mono text-xl font-extrabold text-ink">{shiftCount(detail.name, schedule)}</p>
+                  <p className="text-caption font-semibold text-meta">Shifts</p>
+                </div>
+                <div className="rounded-xl border border-line bg-canvas p-3 text-center">
+                  <p className="font-mono text-xl font-extrabold text-ink">{weeklyHours(detail.name, schedule)}h</p>
+                  <p className="text-caption font-semibold text-meta">Hours</p>
+                </div>
+                <div className="rounded-xl border border-line bg-canvas p-3 text-center">
+                  <p className="font-mono text-xl font-extrabold text-ink">{detail.hasPin ? '✓' : '—'}</p>
+                  <p className="text-caption font-semibold text-meta">PIN set</p>
+                </div>
+              </div>
+            </DetailSection>
+
+            <DetailSection title="Upcoming shifts">
+              {schedule.filter((s) => s.staff === detail.name).length === 0 ? (
+              <p className="rounded-xl border border-dashed border-line bg-canvas px-3 py-4 text-center text-sm text-meta">
+                No shifts scheduled — tap a day on the grid to add one.
+                </p>
+              ) : (
+              <div className="overflow-hidden rounded-xl border border-line">
+                  {schedule
+                .filter((s) => s.staff === detail.name)
+                .map((s, i) => (
+                  <div key={i} className="flex items-center justify-between border-b border-line bg-canvas px-4 py-2.5 last:border-b-0">
+                      <span className="text-sm font-semibold text-ink">{weekDays[s.day]}</span>
+                      <span className="font-mono text-sm text-meta">{s.time} · {s.role}</span>
+                    </div>
+                ))}
+                </div>
+              )}
+            </DetailSection>
+
+            {detail.active !== false &&
+          <DetailSection title="Quick actions">
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                variant="outline"
+                icon={<CalendarDaysIcon className="h-4 w-4" />}
+                onClick={() => {
+                  setDetail(null);
+                  openShift({ staff: detail.name, day: 3, shift: null });
+                }}>
+                Adjust schedule
+                </Button>
+                <Button
+                variant="outline"
+                icon={<MessageSquareIcon className="h-4 w-4" />}
+                onClick={() => {
+                  setDetail(null);
+                  openMessage(detail);
+                }}>
+                Message
+                </Button>
+              </div>
+            </DetailSection>
+          }
+
+            <DetailSection title="Danger zone">
+              {detail.active === false ? (
+              <Button variant="green" full onClick={() => reactivate(detail)}>
+                Reactivate {detail.name.split(' ')[0]}
+                </Button>
+            ) : (
+              <Button
+                variant="red"
+                full
+                icon={<UserXIcon className="h-4 w-4" />}
+                onClick={() => {
+                  deactivate(detail);
+                  setDetail(null);
+                }}>
+                Deactivate {detail.name.split(' ')[0]}
+                </Button>
+            )}
+            </DetailSection>
+          </>
+        }
+      </DetailDrawer>
+
+      <Drawer
         open={!!selected}
         onClose={() => setSelected(null)}
         title={selected?.shift ? 'Edit shift' : 'Add shift'}
@@ -488,7 +696,6 @@ export function Team() {
                 Save changes
               </Button>
             </> :
-
         <>
               <Button variant="outline" onClick={() => setSelected(null)}>
                 Cancel
@@ -497,9 +704,7 @@ export function Team() {
                 Add shift
               </Button>
             </>
-
         }>
-        
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Start">
@@ -556,17 +761,16 @@ export function Team() {
               variant="green"
               full
               onClick={() => {
-                toast(`Schedule published · ${notifyTeam ? staff.length + ' staff notified' : 'no notifications'}`, { tone: 'green' });
+                toast(`Schedule published · ${notifyTeam ? staffData.length + ' staff notified' : 'no notifications'}`, { tone: 'green' });
                 setScheduleOpen(false);
               }}>
               Confirm publish
             </Button>
           </>
         }>
-        
         <div className="space-y-5">
             <div>
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="mb-3 text-caption font-semibold text-meta">
                 Week range
               </p>
               <FilterChips
@@ -577,7 +781,7 @@ export function Team() {
             </div>
 
             <div>
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+              <p className="mb-3 text-caption font-semibold text-meta">
                 Staff with changes since last publish
               </p>
               <div className="space-y-1.5">
@@ -585,9 +789,8 @@ export function Team() {
                   <div
                     key={s.name}
                     className="flex items-center justify-between rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm">
-                    
                     <div className="flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface text-[10px] font-bold text-ink">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface text-micro font-bold text-ink">
                         {s.name.split(' ').map((n) => n[0]).join('')}
                       </span>
                       <div>
@@ -603,7 +806,7 @@ export function Team() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-line bg-canvas p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <p className="text-caption font-semibold text-meta">
                   Scheduled hours
                 </p>
                 <p className="mt-1 font-mono text-2xl font-extrabold text-ink">
@@ -614,7 +817,7 @@ export function Team() {
                 budgetDiff > 0
                   ? 'border-status-red/30 bg-tint-red/40'
                   : 'border-status-green/30 bg-tint-green/40'}`}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                <p className="text-caption font-semibold text-meta">
                   Labor budget
                 </p>
                 <p className="mt-1 font-mono text-2xl font-extrabold text-ink">
@@ -654,7 +857,7 @@ export function Team() {
                 <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm ${
                   m.from === 'me' ? 'rounded-br-sm bg-ink text-white' : 'rounded-bl-sm border border-line bg-canvas text-ink'}`}>
                   <p>{m.text}</p>
-                  <p className={`mt-1 text-[10px] ${m.from === 'me' ? 'text-white/50' : 'text-meta'}`}>{m.time}</p>
+                  <p className={`mt-1 text-micro ${m.from === 'me' ? 'text-white/50' : 'text-meta'}`}>{m.time}</p>
                 </div>
               </div>
             ))}
@@ -671,7 +874,7 @@ export function Team() {
               aria-label="Send message"
               onClick={sendMessage}
               disabled={!draft.trim()}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ink text-white transition-opacity duration-150 ease-soft hover:opacity-90 disabled:opacity-40">
+              className="btn btn-primary btn-icon-only shrink-0">
               <SendIcon className="h-4 w-4" />
             </button>
           </div>
@@ -764,6 +967,14 @@ export function Team() {
                 value={form.station}
                 onChange={(e) => setForm({ ...form, station: e.target.value })}
                 placeholder="Main floor" />
+            </Field>
+            <Field label="Hourly rate (Rs / hour)">
+              <input
+                className={inputClass}
+                inputMode="decimal"
+                value={form.rate ?? ''}
+                onChange={(e) => setForm({ ...form, rate: e.target.value.replace(/[^0-9.]/g, '') })}
+                placeholder="e.g. 250" />
             </Field>
 
             {editingStaff &&

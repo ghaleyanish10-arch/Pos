@@ -76,7 +76,7 @@ export function ElevationProvider({ children }) {
       {prompt && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/40 p-4" role="dialog" aria-modal="true">
           <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-pop">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-meta">Manager approval</p>
+            <p className="text-caption font-semibold text-meta">Manager approval</p>
             <h2 className="mt-1 text-lg font-extrabold text-ink">{prompt.label || 'This action needs a manager'}</h2>
             <p className="mt-1 text-xs text-meta">
               Enter the manager PIN to authorize this single action. Nothing is stored.
@@ -84,7 +84,7 @@ export function ElevationProvider({ children }) {
 
             {Array.isArray(holders) && holders.length > 0 && (
               <div className="mt-4">
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Authorizing manager</p>
+                <p className="mb-1.5 text-caption font-semibold text-meta">Authorizing manager</p>
                 <div className="flex flex-wrap gap-1.5">
                   {holders.map((h) => (
                     <button

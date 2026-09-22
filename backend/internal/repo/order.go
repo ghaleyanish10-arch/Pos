@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mesa-os/backend/internal/model"
@@ -99,6 +100,24 @@ func (r *OrderRepo) ResolveTable(ctx context.Context, name string) (string, stri
 	return id, branch, err
 }
 
+// ResolveTableByUUID returns the branch for an existing floor table id
+// (usually resolved from a QR-scanned table name). pgx.ErrNoRows when the id
+// does not exist.
+func (r *OrderRepo) ResolveTableByUUID(ctx context.Context, id string) (string, error) {
+	var branch string
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(branch_id::text, '') FROM floor_tables WHERE id = $1`, id,
+	).Scan(&branch)
+	return branch, err
+}
+
+// GuestExists reports whether a guest record with the given id exists.
+func (r *OrderRepo) GuestExists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM guests WHERE id = $1)`, id).Scan(&exists)
+	return exists, err
+}
+
 func (r *OrderRepo) Create(ctx context.Context, o *model.Order, items []model.CreateOrderItemReq) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -113,6 +132,7 @@ func (r *OrderRepo) Create(ctx context.Context, o *model.Order, items []model.Cr
 	if err != nil {
 		return err
 	}
+	o.Status = "open"
 
 	var total float64
 	for _, item := range items {
@@ -172,5 +192,5 @@ func (r *OrderRepo) Delete(ctx context.Context, id string) error {
 }
 
 func itoa(i int) string {
-	return string(rune('0' + i))
+	return strconv.Itoa(i)
 }

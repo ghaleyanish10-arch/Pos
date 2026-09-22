@@ -59,6 +59,14 @@ func (r *RefundRepo) Create(ctx context.Context, rf *model.Refund) error {
 	return err
 }
 
+// TransactionExists reports whether a payment transaction with the given id is
+// in the ledger (refunds may only reference real payments).
+func (r *RefundRepo) TransactionExists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM transactions WHERE id = $1)`, id).Scan(&exists)
+	return exists, err
+}
+
 // GetCreator returns the user that filed the refund — the separation-of-duties
 // anchor for approval. pgx.ErrNoRows when the refund does not exist.
 func (r *RefundRepo) GetCreator(ctx context.Context, id string) (string, error) {

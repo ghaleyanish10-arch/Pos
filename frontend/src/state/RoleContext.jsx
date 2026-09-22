@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { api, getApiUser, hasApiSession, establishSession, clearApiSession, getDeviceId } from '../api/client';
+import { api, getApiUser, hasApiSession, establishSession, clearApiSession, clearElevationToken, getDeviceId } from '../api/client';
 import { navGroups } from '../data/nav';
 
 export const ROLES = {
@@ -8,6 +8,16 @@ export const ROLES = {
   manager: { label: 'Manager', defaultPath: '/', initials: 'MA' },
   boss: { label: 'Boss', defaultPath: '/', initials: 'BO' }
 };
+
+// Switchable hats. "Admin" is the owner/boss realm; the rest are the staff
+// views an owner or manager can wear without logging out. Switching requires
+// the staff member's own PIN — the same one clock-in uses.
+export const SWITCHABLE_ROLES = [
+  { key: 'kitchen', label: 'Kitchen', icon: 'Kitchen' },
+  { key: 'manager', label: 'Manager', icon: 'Manager' },
+  { key: 'cashier', label: 'Cashier', icon: 'Cashier' },
+  { key: 'admin', label: 'Admin', icon: 'Admin' }
+];
 
 export const ROLE_IDS = ['cashier', 'kitchen', 'manager', 'boss'];
 
@@ -21,26 +31,37 @@ const DB_ROLE_MAP = {
   'Corporate Admin': 'boss'
 };
 
+// Frontend role id -> switch-role key. The boss session maps to 'admin'
+// because that is the key the backend's switchableRoles table accepts.
+export const SWITCH_KEY_FOR_ROLE = { cashier: 'cashier', kitchen: 'kitchen', manager: 'manager', boss: 'admin' };
+
 export function frontendRole(dbRole) {
   return DB_ROLE_MAP[dbRole] || 'manager';
 }
 
-const allNavPaths = navGroups.flatMap((g) => g.items.map((i) => i.path));
+const allNavPaths = navGroups.flatMap((g) =>
+  g.items.flatMap((i) => [i.path, ...(i.children || []).map((c) => c.path)])
+);
 
 const ROLE_ALLOWED = {
   cashier: new Set([
     '/',
+    '/dashboard',
     '/register',
     '/orders',
     '/transactions',
+    '/transactions-list',
     '/manual-payment',
     '/bookings',
     '/front-of-house',
-    '/delivery'
+    '/delivery',
+    '/alerts',
+    '/staff'
   ]),
-  kitchen: new Set(['/', '/kds']),
-  manager: new Set(allNavPaths.filter((p) => !['/manual-payment', '/permissions', '/settings', '/audit', '/system-health'].includes(p)).concat('/')),
-  boss: new Set(allNavPaths.concat('/'))
+  kitchen: new Set(['/', '/dashboard', '/kds', '/alerts', '/staff']),
+  // Payroll is manager/admin only — mirrors the backend's RequireRole gate.
+  manager: new Set(allNavPaths.filter((p) => !['/manual-payment', '/permissions', '/settings', '/audit', '/system-health'].includes(p)).concat(['/', '/alerts', '/staff'])),
+  boss: new Set(allNavPaths.concat('/', '/alerts', '/staff'))
 };
 
 const RoleContext = createContext(null);
@@ -59,6 +80,21 @@ export function RoleProvider({ children }) {
       method: 'POST',
       body: { user_id: userId, pin, device_id: getDeviceId() }
     });
+    establishSession(res.token, res.user);
+    return res.user;
+  };
+
+  // Re-wear the session as another role after re-entering the staff PIN.
+  // The server re-mints a full shift session for the target role, so every
+  // RequireRole gate genuinely reflects the worn hat — no client-side faking.
+  const switchRole = async (roleKey, pin) => {
+    const res = await api('/auth/switch-role', {
+      method: 'POST',
+      body: { role: roleKey, pin }
+    });
+    // A new hat starts clean: any step-up token borrowed under the old one
+    // must not carry over.
+    clearElevationToken();
     establishSession(res.token, res.user);
     return res.user;
   };
@@ -109,7 +145,7 @@ export function RoleProvider({ children }) {
   }, [role]);
 
   return (
-    <RoleContext.Provider value={{ role, session, clockIn, clockOut }}>
+    <RoleContext.Provider value={{ role, session, clockIn, clockOut, switchRole }}>
       {children}
     </RoleContext.Provider>
   );
@@ -133,12 +169,15 @@ export function visibleGroupsFor(role) {
   if (!role) return [];
   const allowed = ROLE_ALLOWED[role];
   return navGroups
-    .map((g) => ({ ...g, items: g.items.filter((i) => allowed.has(i.path)) }))
-    .filter((g) => g.items.length > 0)
-    .map((g) => {
-      if (role === 'kitchen' && g.index === '04') {
-        return { ...g, title: 'POS · Core operations' };
-      }
-      return g;
-    });
+    .map((g) => ({
+      ...g,
+      items: g.items
+        .filter((i) => allowed.has(i.path))
+        .map((i) => ({
+          ...i,
+          children: (i.children || []).filter((c) => allowed.has(c.path))
+        }))
+        .map((i) => (i.children && i.children.length === 0 ? { ...i, children: undefined } : i))
+    }))
+    .filter((g) => g.items.length > 0);
 }

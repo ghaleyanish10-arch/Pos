@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangleIcon, CheckIcon, InfoIcon, XIcon } from 'lucide-react';
+import { soundEngine } from '../../utils/sound';
 
 const ToastContext = createContext(() => {});
 
@@ -22,6 +23,7 @@ const toneBg = {
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
+  const lastTone = useRef(0);
 
   const dismiss = useCallback((id) => {
     setToasts((t) => t.filter((x) => x.id !== id));
@@ -30,6 +32,18 @@ export function ToastProvider({ children }) {
   const push = useCallback((message, opts = {}) => {
     const id = Math.random().toString(36).slice(2);
     setToasts((t) => [...t, { id, message, tone: opts.tone || 'dark', undo: opts.undo }]);
+    // Toast tones carry sound unless the caller already routed a specific
+    // event (opts.silent) — success chimes, errors warn. A 350ms floor keeps
+    // a burst of toasts from machine-gunning; silent callers manage their own
+    // sound with proper event cooldowns (Register payments, KDS, etc.).
+    if (!opts.silent) {
+      const now = Date.now();
+      if (now - lastTone.current > 350) {
+        lastTone.current = now;
+        if (opts.tone === 'green') soundEngine.play('success');
+        else if (opts.tone === 'red') soundEngine.play('warning');
+      }
+    }
     window.setTimeout(() => dismiss(id), opts.duration || 4000);
   }, [dismiss]);
 
@@ -64,7 +78,7 @@ export function ToastProvider({ children }) {
                 t.undo();
                 dismiss(t.id);
               }}
-              className="ml-1 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wider transition-colors duration-150 ease-soft hover:bg-white/25">
+              className="ml-1 rounded-full bg-white/15 px-3 py-1 text-xs font-semiboldr transition-colors duration-150 ease-soft hover:bg-white/25">
                   
                   Undo
                 </button>

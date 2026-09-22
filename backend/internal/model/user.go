@@ -54,8 +54,12 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+// VerifyEmailRequest accepts either the emailed link token OR the 6-digit
+// OTP (email + code). Exactly one proof shape is required.
 type VerifyEmailRequest struct {
-	Token string `json:"token" binding:"required"`
+	Token string `json:"token"`
+	Email string `json:"email"`
+	Code  string `json:"code"`
 }
 
 type ForgotPasswordRequest struct {
@@ -119,6 +123,20 @@ type ClockInRequest struct {
 type ClockOutRequest struct {
 	UserID   string `json:"user_id" binding:"required"`
 	DeviceID string `json:"device_id"`
+}
+
+// SwitchRoleRequest is the body of POST /auth/switch-role: a logged-in staff
+// member re-enters THEIR OWN PIN to re-mint the session as another role.
+type SwitchRoleRequest struct {
+	Role string `json:"role" binding:"required"`
+	PIN  string `json:"pin" binding:"required"`
+}
+
+// SetOwnPINRequest is the body of POST /auth/pin (first-time self-service PIN
+// creation). It succeeds only for accounts with no PIN yet; resets stay with
+// the password-re-authenticated boss endpoint.
+type SetOwnPINRequest struct {
+	PIN string `json:"pin" binding:"required"`
 }
 
 // RosterMember is the deliberately bare staff-identity surface shown on the

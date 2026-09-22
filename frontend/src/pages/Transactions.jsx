@@ -211,10 +211,10 @@ export function Transactions() {
   return (
     <div className="mx-auto w-full max-w-[1400px]">
       <PageHeader title="Transactions" descriptor="126 today · Rs 1,86,420">
-        <Button variant="outline" icon={<CalendarIcon className="h-4 w-4" />}>
+        <span className="flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-meta">
+          <CalendarIcon className="h-3.5 w-3.5" />
           Today · 10 Sep
-        </Button>
-        <Button variant="outline">Export CSV</Button>
+        </span>
       </PageHeader>
 
       <div className="sticky top-0 z-10 -mx-1 mb-4 px-1">

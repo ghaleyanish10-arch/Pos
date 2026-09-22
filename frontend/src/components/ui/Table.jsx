@@ -22,7 +22,7 @@ export function Th({
   return (
     <th
       scope="col"
-      className={`whitespace-nowrap bg-surface px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-meta ${className}`}>
+      className={`whitespace-nowrap bg-surface px-4 py-3 text-left text-caption font-semibold text-meta ${className}`}>
       
       {children}
     </th>);
@@ -41,17 +41,11 @@ export function Td({
 
 }
 
-export function Tr({
-  children,
-  className = '',
-  onClick
-}) {
+export function Tr({ children, className = '', ...rest }) {
   return (
     <tr
-      onClick={onClick}
-      className={`border-t border-line transition-colors duration-150 ease-soft ${onClick ? 'cursor-pointer hover:bg-canvas' : ''} ${className}`}>
-      
+      {...rest}
+      className={`border-t border-line transition-colors duration-150 ease-soft ${rest.onClick ? 'cursor-pointer hover:bg-canvas' : ''} ${className}`}>
       {children}
     </tr>);
-
 }

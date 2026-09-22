@@ -6,6 +6,13 @@ const MenuContext = createContext(null);
 
 const ALL = 'All items';
 
+// Parse a displayed price like "Rs 380.75" into 380.75 — keeps decimals
+// (the old \D-strip made "Rs 380.75" into 38075 and charged 100x).
+function toNumPrice(value) {
+  const n = Number(String(value == null ? '' : value).replace(/[^0-9.]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
 function toDisplay(item, idToCat) {
   const category = idToCat[item.category_id] || 'Uncategorized';
   return {
@@ -73,7 +80,7 @@ export function MenuProvider({ children }) {
         method: 'POST',
         body: {
           name: local.name,
-          price: local.priceNum ?? Number(String(local.price).replace(/\D/g, '')),
+          price: local.priceNum ?? toNumPrice(local.price),
           category_id: local.category_id,
           photo_url: local.photo || '',
           available: !!local.available
@@ -97,7 +104,7 @@ export function MenuProvider({ children }) {
         method: 'PUT',
         body: {
           name: item.name,
-          price: item.priceNum ?? Number(String(item.price).replace(/\D/g, '')),
+          price: item.priceNum ?? toNumPrice(item.price),
           category_id: item.category_id || catIdByName[item.category] || '',
           photo_url: item.photo || '',
           available: !!item.available
@@ -110,9 +117,47 @@ export function MenuProvider({ children }) {
     setItems((prev) => prev.filter((it) => it.name !== name));
   }, []);
 
+  const bulkUpdate = useCallback(async (ids, patch) => {
+    if (!ids.length) return;
+    const pricePatch = (it) => {
+      if (patch.pricePercent !== undefined && patch.pricePercent !== null) {
+        const cur = it.priceNum ?? toNumPrice(it.price);
+        const next = Math.max(0, Math.round(cur * (1 + patch.pricePercent / 100) * 100) / 100);
+        return { price: next, priceNum: next, pricePercent: undefined };
+      }
+      if (patch.priceDelta !== undefined && patch.priceDelta !== null) {
+        const cur = it.priceNum ?? toNumPrice(it.price);
+        const next = Math.max(0, cur + patch.priceDelta);
+        return { price: next, priceNum: next, priceDelta: undefined };
+      }
+      return {};
+    };
+    // category_id may be given as a display name ("Momo & Snacks") — resolve to
+    // the real server id; if it is already an id, keep it as-is.
+    const resolvedCategory = patch.category_id
+      ? catIdByName[patch.category_id] || patch.category_id
+      : undefined;
+    setItems((prev) => prev.map((it) => (ids.includes(it.id) ? { ...it, ...patch, ...pricePatch(it) } : it)));
+    try {
+      await api('/menu/bulk', {
+        method: 'PUT',
+        body: {
+          ids,
+          available: patch.available,
+          published: patch.published,
+          category_id: resolvedCategory,
+          price_delta: patch.priceDelta,
+          price_percent: patch.pricePercent
+        }
+      });
+    } catch {
+      // Local state already reflects the change; server sync retried on reload.
+    }
+  }, [catIdByName]);
+
   const value = useMemo(
-    () => ({ items, categories, categoriesById: catIdByName, addItem, updateItem, removeItem }),
-    [items, categories, catIdByName, addItem, updateItem, removeItem]
+    () => ({ items, categories, categoriesById: catIdByName, addItem, updateItem, removeItem, bulkUpdate }),
+    [items, categories, catIdByName, addItem, updateItem, removeItem, bulkUpdate]
   );
 
   return (

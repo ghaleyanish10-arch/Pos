@@ -107,15 +107,15 @@ func TestTerminalStatusListsOnlyManagersAndBossesAsApprovers(t *testing.T) {
 	r, _ := newClockInRouter(t, 12*time.Hour)
 	adminToken := loginBoss(t, r)
 	registerAndLogin(t, r, adminToken, "Cashier Mina", "mina@test.dev", "password123", "Cashier")
-	registerAndLogin(t, r, adminToken, "Kitchen Kiran", "kiran@test.dev", "password123", "Kitchen")
+	registerAndLogin(t, r, adminToken, "Stock Kiran", "kiran@test.dev", "password123", "Inventory Auditor")
 	mgrID, _ := newManager(t, r, "Approver Ana", "approver@test.dev")
 	_ = mgrID
 
 	// The boss (Corporate Admin) already exists in the seed, so the approvers
-	// list must contain the manager and the boss but never the cashier/kitchen.
+	// list must contain the manager and the boss but never the cashier/auditor.
 	_, names := terminalStatus(t, r, "term-approvers-1")
 	for _, n := range names {
-		if n == "Cashier Mina" || n == "Kitchen Kiran" {
+		if n == "Cashier Mina" || n == "Stock Kiran" {
 			t.Fatalf("approvers leaked non-manager %q: %v", n, names)
 		}
 	}

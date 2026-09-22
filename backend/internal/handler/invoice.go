@@ -54,18 +54,27 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 	}
 
 	branchID, _ := c.Get("branch_id")
-	dueDate, _ := time.Parse("2006-01-02", req.DueDate)
+	dueDate, err := time.Parse("2006-01-02", req.DueDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "due_date must be a valid YYYY-MM-DD date"})
+		return
+	}
 
 	var total float64
 	for _, item := range req.Items {
 		total += float64(item.Qty) * item.UnitPrice
 	}
 
+	branch := ""
+	if b, ok := branchID.(string); ok {
+		branch = b
+	}
+
 	inv := &model.Invoice{
 		Party:    req.Party,
 		Amount:   total,
 		DueDate:  dueDate,
-		BranchID: strPtr(branchID.(string)),
+		BranchID: strPtr(branch),
 	}
 
 	if err := h.repo.Create(c.Request.Context(), inv, req.Items); err != nil {

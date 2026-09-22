@@ -166,7 +166,7 @@ export function Marketing() {
                 </Field>
 
                 <div className="rounded-xl border border-line bg-canvas p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                  <p className="text-caption font-semibold text-meta">
                     Promote a dish
                   </p>
                   <p className="mt-1 text-xs text-meta">
@@ -183,7 +183,7 @@ export function Marketing() {
                 </div>
 
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                  <p className="text-caption font-semibold text-meta">
                     Phase dates
                   </p>
                   <p className="mt-1 text-xs text-meta">
@@ -246,7 +246,7 @@ export function Marketing() {
               <div className="mt-5 space-y-4">
                 {dish !== 'None' && (
                   <div className="rounded-xl border border-ink/20 bg-ink px-4 py-3 text-white">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/60">
+                    <p className="text-caption font-semibold text-white/60">
                       Featured dish
                     </p>
                     <p className="mt-1 text-lg font-extrabold">{dish}</p>
@@ -259,7 +259,7 @@ export function Marketing() {
                 )}
 
                 <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Phase timeline</p>
+                  <p className="text-caption font-semibold text-meta">Phase timeline</p>
                   <p className="mt-1 text-xs text-meta">
                     The register banner advances on its own as each date passes.
                   </p>
@@ -284,13 +284,13 @@ export function Marketing() {
                 </div>
 
                 <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Audience</p>
+                  <p className="text-caption font-semibold text-meta">Audience</p>
                   <p className="mt-1 font-mono text-lg font-extrabold text-ink">{channelAudience}</p>
                   <p className="text-sm text-meta">{audience}</p>
                 </div>
 
                 <div>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Channel preview</p>
+                  <p className="mb-2 text-caption font-semibold text-meta">Channel preview</p>
                   <div className="space-y-3">
                     {channel === 'Email' && (
                       <div className="rounded-xl border border-line bg-surface p-4">
@@ -309,7 +309,7 @@ export function Marketing() {
                           <span className="text-xs font-semibold text-meta">SMS</span>
                         </div>
                         <p className="mt-2 text-xs leading-relaxed text-meta">{message}</p>
-                        <p className="mt-1 text-[10px] text-meta">STOP to opt out</p>
+                        <p className="mt-1 text-micro text-meta">STOP to opt out</p>
                       </div>
                     )}
                     {channel === 'Push' && (
@@ -326,7 +326,7 @@ export function Marketing() {
                 </div>
 
                 <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Scheduled send</p>
+                  <p className="text-caption font-semibold text-meta">Scheduled send</p>
                   <p className="mt-1 text-sm font-semibold text-ink">
                     {scheduledFor()}
                   </p>
@@ -348,7 +348,7 @@ export function Marketing() {
           )}
 
           <Card>
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+            <h3 className="text-caption font-semibold text-meta">
               Estimated reach
             </h3>
             <p className="mt-2 font-mono text-3xl font-extrabold text-ink">{channelAudience}</p>
@@ -384,7 +384,7 @@ export function Marketing() {
                     <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-canvas text-ink">
                       <Icon className="h-4 w-4" />
                     </span>
-                    <h3 className="text-[16px] font-bold leading-tight text-ink">
+                    <h3 className="text-base font-bold leading-tight text-ink">
                       {c.name}
                     </h3>
                   </div>
@@ -406,7 +406,7 @@ export function Marketing() {
                         {phaseLabel[phase]}
                       </Pill>
                       {phase !== 'hidden' && c.preorderStart && (
-                        <span className="text-[11px] text-meta">
+                        <span className="text-caption text-meta">
                           {phase === 'preview'
                             ? `Pre-order opens ${timeline(c)[1]?.display}`
                             : phase === 'preorder'
@@ -415,7 +415,7 @@ export function Marketing() {
                         </span>
                       )}
                     </div>
-                    <p className="flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-meta">
+                    <p className="flex flex-wrap items-center gap-x-1.5 font-mono text-caption text-meta">
                       {timeline(c).map((t, i) => (
                         <span key={t.label} className="flex items-center gap-1.5">
                           {i > 0 && <span className="text-meta">→</span>}

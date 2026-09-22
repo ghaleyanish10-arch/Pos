@@ -46,11 +46,29 @@ func (h *BookingHandler) CreateReservation(c *gin.Context) {
 		return
 	}
 
-	branchID, _ := c.Get("branch_id")
-	startTime, _ := time.Parse(time.RFC3339, req.StartTime)
+	if req.Covers <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "covers must be greater than zero"})
+		return
+	}
 
+	startTime, err := time.Parse(time.RFC3339, req.StartTime)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "start_time must be a valid RFC3339 timestamp"})
+		return
+	}
+
+	if req.Duration < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "duration cannot be negative"})
+		return
+	}
 	if req.Duration == 0 {
 		req.Duration = 60
+	}
+
+	branchID, _ := c.Get("branch_id")
+	branch := ""
+	if s, ok := branchID.(string); ok {
+		branch = s
 	}
 
 	res := &model.Reservation{
@@ -61,7 +79,7 @@ func (h *BookingHandler) CreateReservation(c *gin.Context) {
 		StartTime: startTime,
 		Duration:  req.Duration,
 		Status:    "Confirmed",
-		BranchID:  strPtr(branchID.(string)),
+		BranchID:  strPtr(branch),
 	}
 
 	if err := h.repo.CreateReservation(c.Request.Context(), res); err != nil {

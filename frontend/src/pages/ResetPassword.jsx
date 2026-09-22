@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ShieldCheckIcon } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Field, inputClass } from '../components/ui/Controls';
+import { AuthCard, AuthShell, BrandLogo } from '../components/auth/AuthChrome';
 import api from '../api/client';
 
 export function ResetPassword() {
@@ -38,8 +39,9 @@ export function ResetPassword() {
   };
 
   return (
-    <div className="mx-auto flex min-h-[70vh] w-full max-w-[480px] flex-col items-center justify-center">
-      <div className="w-full rounded-card border border-line bg-surface p-8">
+    <AuthShell>
+      <BrandLogo />
+      <AuthCard>
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-tint-green text-status-green">
           <ShieldCheckIcon className="h-7 w-7" />
         </span>
@@ -89,7 +91,7 @@ export function ResetPassword() {
             </Link>
           </form>
         )}
-      </div>
-    </div>
+      </AuthCard>
+    </AuthShell>
   );
 }

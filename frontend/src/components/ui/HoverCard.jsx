@@ -65,7 +65,7 @@ export function HoverCardContent({ name, role, subtitle, status, stats = [] }) {
         <div className="flex gap-4 pt-2 border-t border-line">
           {stats.map((s) => (
             <div key={s.label}>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-meta">{s.label}</p>
+              <p className="text-caption font-semiboldr text-meta">{s.label}</p>
               <p className="mt-0.5 font-mono text-sm font-bold text-ink">{s.value}</p>
             </div>
           ))}

@@ -7,14 +7,8 @@ import { Pill } from '../components/ui/Pill';
 import { Drawer } from '../components/ui/Drawer';
 import { Field, inputClass, SearchInput, FilterChips } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
-import {
-  transfersInTransit,
-  transfersReceived,
-  transfersRequested,
-  branches,
-  inventoryItems } from
-'../data/ims';
 import api from '../api/client';
+import { inventoryItems } from '../data/ims';
 
 function Route({ transfer }) {
   return (
@@ -29,13 +23,14 @@ function Route({ transfer }) {
 export function Transfers() {
   const toast = useToast();
   const [counting, setCounting] = useState(null);
-  const [requested, setRequested] = useState(transfersRequested);
-  const [inTransit, setInTransit] = useState(transfersInTransit);
-  const [received, setReceived] = useState(transfersReceived);
+  const [requested, setRequested] = useState([]);
+  const [inTransit, setInTransit] = useState([]);
+  const [received, setReceived] = useState([]);
   const [newOpen, setNewOpen] = useState(false);
-  const [nextId, setNextId] = useState(223);
-  const [newSource, setNewSource] = useState('Central Kitchen');
-  const [newDest, setNewDest] = useState('Thamel House');
+  const [branchMap, setBranchMap] = useState({});
+  const [branchNames, setBranchNames] = useState([]);
+  const [newSource, setNewSource] = useState('');
+  const [newDest, setNewDest] = useState('');
   const [newItem, setNewItem] = useState('');
   const [newQty, setNewQty] = useState('');
   const [newDate, setNewDate] = useState('2026-09-14');
@@ -43,29 +38,50 @@ export function Transfers() {
   const [receiveDrawer, setReceiveDrawer] = useState(null);
   const [receiveLines, setReceiveLines] = useState([]);
 
+  const nameOf = (id) => Object.keys(branchMap).find((n) => branchMap[n] === id) || id;
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await api('/transfers');
+        const branchRes = await api('/branches');
+        const transferRes = await api('/transfers');
         if (cancelled) return;
-        const data = res?.data || [];
-        if (data.length > 0) {
-          const fromApi = (g) => ({
-            id: g.id,
-            item: g.item || '',
-            qty: `${g.qty} pcs`,
-            from: g.from_branch_id || '',
-            to: g.to_branch_id || '',
-            age: (() => { const m = Math.floor((Date.now() - new Date(g.created_at).getTime()) / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr`; })(),
-            eta: g.eta ? (() => { const m = Math.floor((new Date(g.eta).getTime() - Date.now()) / 60000); return m > 0 ? `${m} min` : 'Now'; })() : undefined,
-          });
-          setRequested(data.filter((g) => g.status === 'Requested').map(fromApi));
-          setInTransit(data.filter((g) => g.status !== 'Requested' && g.status !== 'Received').map(fromApi));
-          setReceived(data.filter((g) => g.status === 'Received').map(fromApi));
+        const idToName = {};
+        const map = {};
+        (branchRes?.data || []).forEach((b) => {
+          if (b.name) {
+            map[b.name] = b.id;
+            idToName[b.id] = b.name;
+          }
+        });
+        setBranchMap(map);
+        setBranchNames(Object.keys(map));
+        const names = Object.keys(map);
+        if (names.length >= 2) {
+          setNewSource(names[0]);
+          setNewDest(names[1]);
         }
+        const data = transferRes?.data || [];
+        const fromApi = (g) => ({
+          id: g.id,
+          item: g.item || '',
+          qty: `${g.qty} pcs`,
+          from: idToName[g.from_branch_id] || g.from_branch_id || '',
+          to: idToName[g.to_branch_id] || g.to_branch_id || '',
+          age: (() => { const m = Math.floor((Date.now() - new Date(g.created_at).getTime()) / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr`; })(),
+          eta: g.eta ? (() => { const m = Math.floor((new Date(g.eta).getTime() - Date.now()) / 60000); return m > 0 ? `${m} min` : 'Now'; })() : undefined,
+        });
+        // Honest board: whatever the server returns — an empty list stays empty.
+        setRequested(data.filter((g) => g.status === 'Requested').map(fromApi));
+        setInTransit(data.filter((g) => g.status !== 'Requested' && g.status !== 'Received').map(fromApi));
+        setReceived(data.filter((g) => g.status === 'Received').map(fromApi));
       } catch {
-        /* keep static transfers as fallback */
+        if (!cancelled) {
+          setRequested([]);
+          setInTransit([]);
+          setReceived([]);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -75,21 +91,44 @@ export function Transfers() {
     item.toLowerCase().includes(itemSearch.toLowerCase())
   );
 
-  const handleSendTransfer = () => {
+  const handleSendTransfer = async () => {
     if (!newItem || !newQty) {
       toast.error('Fill in item and quantity');
       return;
     }
-    const id = `IBT-${nextId}`;
-    const qtyStr = `${newQty} pcs`;
-    setRequested((prev) => [...prev, { id, item: newItem, qty: qtyStr, from: newSource, to: newDest, age: 'Just now' }]);
-    setNextId((n) => n + 1);
-    setNewOpen(false);
-    setNewItem('');
-    setNewQty('');
-    setNewDate('2026-09-14');
-    toast.success('Transfer sent · In transit');
-    api('/transfers', { method: 'POST', body: { item: newItem, qty: parseFloat(newQty), from_branch_id: newSource, to_branch_id: newDest } }).catch(() => {});
+    if (!newSource || !newDest) {
+      toast.error('Choose source and destination branches');
+      return;
+    }
+    if (newSource === newDest) {
+      toast.error('Source and destination must differ');
+      return;
+    }
+    try {
+      const created = await api('/transfers', {
+        method: 'POST',
+        body: {
+          item: newItem,
+          qty: parseFloat(newQty),
+          from_branch_id: branchMap[newSource],
+          to_branch_id: branchMap[newDest]
+        }
+      });
+      setRequested((prev) => [...prev, {
+        id: created.id,
+        item: created.item || newItem,
+        qty: `${created.qty ?? newQty} pcs`,
+        from: nameOf(created.from_branch_id),
+        to: nameOf(created.to_branch_id),
+        age: 'Just now'
+      }]);
+      setNewOpen(false);
+      setNewItem('');
+      setNewQty('');
+      toast.success('Transfer requested');
+    } catch (err) {
+      toast.error(`Transfer not sent: ${err?.body?.error || err?.message || 'server rejected the transfer'}`);
+    }
   };
 
   const openReceiveDrawer = (transfer) => {
@@ -106,14 +145,18 @@ export function Transfers() {
 
   const totalVariance = receiveLines.reduce((s, l) => s + (l.counted - l.expected), 0);
 
-  const confirmReceipt = () => {
-    setInTransit((prev) => prev.filter((t) => t.id !== receiveDrawer.id));
-    const qtyStr = `${receiveLines[0].counted} ${receiveLines[0].unit}`;
-    setReceived((prev) => [...prev, { ...receiveDrawer, qty: qtyStr, age: 'Just now' }]);
-    setReceiveDrawer(null);
-    setCounting(null);
-    toast.success('Transfer received');
-    api(`/transfers/${receiveDrawer.id}/receive`, { method: 'PUT' }).catch(() => {});
+  const confirmReceipt = async () => {
+    try {
+      await api(`/transfers/${receiveDrawer.id}/receive`, { method: 'PUT' });
+      setInTransit((prev) => prev.filter((t) => t.id !== receiveDrawer.id));
+      const qtyStr = `${receiveLines[0].counted} ${receiveLines[0].unit}`;
+      setReceived((prev) => [...prev, { ...receiveDrawer, qty: qtyStr, age: 'Just now' }]);
+      setReceiveDrawer(null);
+      setCounting(null);
+      toast.success('Transfer received');
+    } catch (err) {
+      toast.error(`Could not confirm receipt: ${err?.body?.error || err?.message || 'server rejected the receive'}`);
+    }
   };
 
   const dispatchTransfer = (id) => {
@@ -185,7 +228,7 @@ export function Transfers() {
               <Route transfer={t} />
               {counting === t.id &&
                 <div className="mt-3 rounded-xl border border-line bg-canvas p-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+                  <label className="block text-caption font-semibold text-meta">
                     Counted on arrival
                   </label>
                   <div className="mt-2 flex items-center gap-2">
@@ -246,7 +289,7 @@ export function Transfers() {
         <div className="space-y-4">
           <Field label="Source branch">
             <FilterChips
-              options={branches}
+              options={branchNames}
               value={newSource}
               onChange={setNewSource}
               ariaLabel="Source branch"
@@ -254,7 +297,7 @@ export function Transfers() {
           </Field>
           <Field label="Destination branch">
             <FilterChips
-              options={branches}
+              options={branchNames}
               value={newDest}
               onChange={setNewDest}
               ariaLabel="Destination branch"
@@ -348,7 +391,7 @@ export function Transfers() {
                 </div>
                 <p className="mt-1 text-xs text-meta">Expected: {l.expected} {l.unit}</p>
                 <div className="mt-2 flex items-center gap-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">Counted</span>
+                  <span className="text-caption font-semibold text-meta">Counted</span>
                   <button
                     type="button"
                     onClick={() => updateReceiveCounted(i, Math.max(0, l.counted - 1))}
@@ -372,7 +415,7 @@ export function Transfers() {
         </div>
 
         <div className="mt-4 rounded-xl border border-line bg-canvas p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-meta">
+          <p className="text-caption font-semibold text-meta">
             Variance summary
           </p>
           <div className="mt-2 flex justify-between text-sm">

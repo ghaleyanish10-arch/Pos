@@ -45,17 +45,42 @@ func (h *RefundHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if !validUUID(req.TransactionID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction_id must be a valid UUID"})
+		return
+	}
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "amount must be greater than zero"})
+		return
+	}
+	if exists, err := h.repo.TransactionExists(c.Request.Context(), req.TransactionID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	} else if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "transaction not found"})
+		return
+	}
+
 	branchID, _ := c.Get("branch_id")
 	userID, _ := c.Get("user_id")
 	items, _ := json.Marshal(req.Items)
+
+	branch := ""
+	if s, ok := branchID.(string); ok {
+		branch = s
+	}
+	byUser := ""
+	if s, ok := userID.(string); ok {
+		byUser = s
+	}
 
 	rf := &model.Refund{
 		TransactionID: req.TransactionID,
 		Items:         items,
 		Reason:        req.Reason,
 		Amount:        req.Amount,
-		BranchID:      strPtr(branchID.(string)),
-		CreatedBy:     userID.(string),
+		BranchID:      strPtr(branch),
+		CreatedBy:     byUser,
 	}
 
 	if err := h.repo.Create(c.Request.Context(), rf); err != nil {

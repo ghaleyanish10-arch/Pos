@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2Icon, CheckCircleIcon, XCircleIcon } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { AuthCard, AuthShell, BrandLogo } from '../components/auth/AuthChrome';
 import { authorizeSession } from '../api/client';
 
 export function AuthCallback() {
@@ -20,11 +21,14 @@ export function AuthCallback() {
       }
       try {
         // The token is a real JWT from the backend callback; authorizeSession
-        // stores it and hydrates the profile from /auth/me.
+        // stores it and hydrates the profile from /auth/me (including the
+        // authoritative email_verified flag).
         await authorizeSession({ tokens: { access_token: token }, user: { email: params.get('email') || '' } });
         if (!cancelled) {
           setState('ok');
-          setTimeout(() => navigate('/'), 700);
+          // Verification is off for now — everyone lands on the dashboard.
+          // (The email_verified detour returns when verification is on.)
+          setTimeout(() => navigate('/', { replace: true }), 700);
         }
       } catch (e) {
         if (!cancelled) {
@@ -37,8 +41,9 @@ export function AuthCallback() {
   }, [token, navigate, params]);
 
   return (
-    <div className="mx-auto flex min-h-[70vh] w-full max-w-[480px] flex-col items-center justify-center">
-      <div className="w-full rounded-card border border-line bg-surface p-8 text-center">
+    <AuthShell>
+      <BrandLogo />
+      <AuthCard className="text-center">
         {state === 'working' && (
           <>
             <Loader2Icon className="mx-auto h-8 w-8 animate-spin text-meta" />
@@ -57,13 +62,17 @@ export function AuthCallback() {
             <XCircleIcon className="mx-auto h-8 w-8 text-status-red" />
             <h1 className="mt-4 text-xl font-extrabold tracking-tight text-ink">Sign-in failed</h1>
             <p className="mt-2 text-sm text-meta">{message}</p>
-            <Link to="/login" className="mt-6 inline-flex h-11 items-center justify-center rounded-xl bg-ink px-6 text-sm font-bold text-white transition-opacity duration-150 ease-soft hover:opacity-90">
+            <Button variant="dark" full className="mt-6" onClick={() => navigate('/')}>
               Back to sign in
-            </Link>
+            </Button>
           </>
         )}
-        <Button variant="quiet" size="sm" className="mt-6" onClick={() => navigate('/')}>Skip for now</Button>
-      </div>
-    </div>
+        {state !== 'error' && (
+          <Link to="/" className="btn btn-ghost mt-6">
+            Skip for now
+          </Link>
+        )}
+      </AuthCard>
+    </AuthShell>
   );
 }
