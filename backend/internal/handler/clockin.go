@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -159,12 +160,47 @@ func (h *ClockInHandler) requireEnabled(c *gin.Context, branchID string) (string
 	return id, true
 }
 
-// Roster lists the staff eligible to clock in at the current branch. It is
-// intentionally bare — id, name, role, branch — with no PIN material of any
-// kind (test-covered). Only an approved terminal may fetch it.
+// deviceBranch resolves the approved terminal's branch from the `devices`
+// row — bound server-side at approval time to the approver's branch, never
+// from client input (there is no authenticated session on the device routes,
+// so the device binding is the ONLY honest tenant scope). Contracts: no row →
+// 403 setup (not approved); row with no branch → 409 setup (approved before
+// branch binding existed, or by a floating account); broken lookup → 500.
+func (h *ClockInHandler) deviceBranch(c *gin.Context) (string, bool) {
+	deviceID, _ := c.Get("device_id")
+	id, _ := deviceID.(string)
+	branch, err := h.devices.BranchOf(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":  "this terminal is not enabled for clock-in",
+				"code":   "TERMINAL_NOT_ENABLED",
+				"action": "setup",
+			})
+			return "", false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "terminal enablement check failed"})
+		return "", false
+	}
+	if branch == "" {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":  "this terminal is not linked to a branch yet — a branch manager must approve it",
+			"code":   "TERMINAL_MISSING_BRANCH",
+			"action": "setup",
+		})
+		return "", false
+	}
+	return branch, true
+}
+
+// Roster lists the staff eligible to clock in at the terminal's OWN branch.
+// The branch is resolved server-side from the approved device's binding —
+// a client-supplied ?branch_id= is ignored, and an unbound device gets setup
+// state, never a dump. It is intentionally bare — id, name, role, branch —
+// with no PIN material of any kind (test-covered).
 func (h *ClockInHandler) Roster(c *gin.Context) {
-	branchID := c.Query("branch_id")
-	if _, ok := h.requireEnabled(c, branchID); !ok {
+	branchID, ok := h.deviceBranch(c)
+	if !ok {
 		return
 	}
 	users, err := h.repo.ListRoster(c.Request.Context(), branchID)
@@ -234,7 +270,12 @@ func (h *ClockInHandler) ClockIn(c *gin.Context) {
 		ginLog("clock-in pin reset failed: " + serr.Error())
 	}
 
-	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, status.Role, status.BranchID, h.config.JWTSecret, h.config.ShiftTTL)
+	tVersion, verr := h.authSvc.CurrentTokenVersion(c.Request.Context(), status.UserID)
+	if verr != nil {
+		tVersion = 0
+	}
+
+	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, status.Role, status.BranchID, tVersion, h.config.JWTSecret, h.config.ShiftTTL)
 	if terr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue session token"})
 		return
@@ -306,30 +347,45 @@ func (h *ClockInHandler) ClockOut(c *gin.Context) {
 }
 
 // TerminalStatus reports whether THIS device (its X-Device-Id) is approved
-// for clock-in, and — when it is not — which staff can approve it: managers
-// and bosses only. It is deliberately ungated: the setup screen has to be
-// reachable before a terminal is enabled.
+// for clock-in, and — when it is not — which staff can approve it (managers
+// and bosses only). It is deliberately ungated: the setup screen has to be
+// reachable before a terminal is enabled. The approvers list is cross-tenant
+// safe by construction: for an approved device the branch is read from the
+// device's OWN binding; for a not-yet-approved device the only acceptable
+// source is a client-declared VALID branch UUID (the terminal knows its
+// branch from a previous binding/local cache) — absent that, the list is
+// empty, so a brand-new terminal shows a setup state instead of every
+// manager in every branch.
 func (h *ClockInHandler) TerminalStatus(c *gin.Context) {
 	deviceID, _ := c.Get("device_id")
 	id, _ := deviceID.(string)
-	branchID := c.Query("branch_id")
 
-	enabled, err := h.devices.IsEnabled(c.Request.Context(), id, branchID)
-	if err != nil {
+	branch, err := h.devices.BranchOf(c.Request.Context(), id)
+	switch {
+	case err == nil:
+		// Approved device: branch comes from its own binding.
+	case errors.Is(err, pgx.ErrNoRows):
+		branch = "" // not approved yet
+	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "terminal enablement check failed"})
 		return
 	}
 
+	enabled := branch != ""
+
 	approvers := []model.RosterMember{}
 	if !enabled {
-		users, lerr := h.repo.ListRoster(c.Request.Context(), branchID)
-		if lerr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load approvers"})
-			return
-		}
-		for _, u := range users {
-			if u.Role == "Store Manager" || u.Role == "Corporate Admin" {
-				approvers = append(approvers, u)
+		declared := c.Query("branch_id")
+		if validUUID(declared) {
+			users, lerr := h.repo.ListRoster(c.Request.Context(), declared)
+			if lerr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load approvers"})
+				return
+			}
+			for _, u := range users {
+				if u.Role == "Store Manager" || u.Role == "Corporate Admin" {
+					approvers = append(approvers, u)
+				}
 			}
 		}
 	}
@@ -347,13 +403,30 @@ func (h *ClockInHandler) TerminalStatus(c *gin.Context) {
 func (h *ClockInHandler) TerminalEnable(c *gin.Context) {
 	var req model.EnableTerminalRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id and pin are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pin is required"})
 		return
 	}
 	deviceID, _ := c.Get("device_id")
 	deviceIDStr, _ := deviceID.(string)
 
-	status, err := h.repo.LoadPIN(c.Request.Context(), req.UserID)
+	// Exactly one identity field: user_id (picked off the roster) or email
+	// (typed on a terminal whose approvers list is empty). Resolving the
+	// account here — rather than trusting a roster row — keeps the enable
+	// flow from depending on the now-scoped approvers list.
+	var status *repo.PINStatus
+	var err error
+	switch {
+	case req.UserID != "" && req.Email != "":
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provide either user_id or email, not both"})
+		return
+	case req.UserID != "":
+		status, err = h.repo.LoadPIN(c.Request.Context(), req.UserID)
+	case req.Email != "":
+		status, err = h.repo.LoadPINByEmail(c.Request.Context(), req.Email)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id or email is required"})
+		return
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Audit without revealing whether the account exists.
@@ -403,26 +476,65 @@ func (h *ClockInHandler) TerminalEnable(c *gin.Context) {
 		ginLog("terminal enable pin reset failed: " + serr.Error())
 	}
 
-	if err := h.devices.Enable(c.Request.Context(), deviceIDStr, req.BranchID, status.UserID); err != nil {
+	// The terminal must declare the branch it physically serves (its intended
+	// tenant). Validated AFTER the PIN — a rejected declaration reveals
+	// nothing about the account's existence or branch to a caller who doesn't
+	// already know the approver's PIN. A cross-branch email (or user_id) can
+	// never bind a device: the device is only ever bound to a branch a real
+	// manager of that branch stood at and echoed back.
+	declared := strings.TrimSpace(req.BranchID)
+	if !validUUID(declared) {
+		h.clockAudit(c, status.UserID, status.Name, status.Role, "terminal.forbidden",
+			"terminal enable denied: no declared branch for this terminal", base)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "this terminal must declare the branch it serves",
+			"code":  "TERMINAL_BRANCH_REQUIRED",
+		})
+		return
+	}
+
+	branch := status.BranchID
+	if branch == "" {
+		h.clockAudit(c, status.UserID, status.Name, status.Role, "terminal.forbidden",
+			"terminal enable denied: approver account has no branch", base)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "your account is not linked to a branch — a branch manager must approve this terminal",
+			"code":  "TERMINAL_SETUP_NO_BRANCH",
+		})
+		return
+	}
+
+	if branch != declared {
+		h.clockAudit(c, status.UserID, status.Name, status.Role, "terminal.forbidden",
+			"terminal enable denied: approver branch "+branch+" did not match declared branch "+declared, base)
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "this account belongs to a different branch than the one this terminal is set to",
+			"code":  "TERMINAL_BRANCH_MISMATCH",
+		})
+		return
+	}
+
+	if err := h.devices.Enable(c.Request.Context(), deviceIDStr, branch, status.UserID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enable terminal"})
 		return
 	}
 
 	h.clockAudit(c, status.UserID, status.Name, status.Role, "terminal.enabled",
-		"terminal enabled by "+status.Name, base)
+		"terminal enabled by "+status.Name+" at branch "+branch, base)
 
 	c.JSON(http.StatusOK, gin.H{
 		"enabled": true,
 		"message": "terminal approved for clock-in",
-		"device":  gin.H{"id": deviceIDStr, "enabled_by_user_id": status.UserID},
+		"device":  gin.H{"id": deviceIDStr, "branch_id": branch, "enabled_by_user_id": status.UserID},
 	})
 }
 
 // ListDevices (boss-only) lists the terminals approved for clock-in at a
 // branch — the management surface that backs the boss's "Disable this
-// terminal" action.
+// terminal" action. The branch comes from the authenticated JWT claim, not a
+// client query (same strict rule as every other tenant scoping fix).
 func (h *ClockInHandler) ListDevices(c *gin.Context) {
-	devices, err := h.devices.List(c.Request.Context(), c.Query("branch_id"))
+	devices, err := h.devices.List(c.Request.Context(), branchIDFromCtx(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list terminals"})
 		return

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRoundIcon, MonitorSmartphoneIcon, PowerIcon } from 'lucide-react';
+import { KeyRoundIcon, MonitorSmartphoneIcon, PowerIcon, Trash2Icon } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
@@ -10,16 +10,24 @@ import { Spinner } from '../../components/ui/Spinner';
 import { AlertBanner } from '../../components/ui/AlertBanner';
 import { useToast } from '../../components/ui/Toast';
 import { ConfirmTyped, FieldError } from './settingsKit';
+import { useRole } from '../../state/RoleContext';
 import api from '../../api/client';
 
 // Boss-only: PIN assignment per staff member, and the approved clock-in
-// terminals. PINs are write-only (server never returns them) and resetting
-// one requires the boss's own password; disabling a terminal sends it back
-// to the manager-approval screen.
+// terminals. PINs are write-only (server never returns them); resetting one
+// requires the boss's own password, re-confirmed at most once per window;
+// deleting an account revokes its PIN and terminal-approval ties.
 const WEAK_PINS = ['1234', '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999', '1212', '6969', '1122'];
+
+// Mirrors backend/internal/handler.PINReauthWindow: a password confirmed
+// within this window skips the prompt. The server enforces the real window;
+// this local copy only decides whether the field is shown.
+const REAUTH_MS = 30 * 60 * 1000;
+const REAUTH_KEY = 'mesa_pin_reauth_at';
 
 export function StaffSection() {
   const toast = useToast();
+  const { session } = useRole();
 
   // --- PINs ---
   const [accounts, setAccounts] = useState(null);
@@ -29,6 +37,9 @@ export function StaffSection() {
   const [bossPassword, setBossPassword] = useState('');
   const [pinBusy, setPinBusy] = useState(false);
   const [pinError, setPinError] = useState('');
+
+  const pinReauthFresh =
+    Date.now() - Number(localStorage.getItem(REAUTH_KEY) || 0) < REAUTH_MS;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,20 +64,45 @@ export function StaffSection() {
 
   const submitPIN = async () => {
     if (!pinTarget) return;
+    const usedPassword = !pinReauthFresh;
     setPinBusy(true);
     setPinError('');
     try {
-      await api(`/staff/${pinTarget.id}/pin`, {
-        method: 'PUT',
-        body: { pin: pinVal.trim(), password: bossPassword }
-      });
+      const body = { pin: pinVal.trim() };
+      if (usedPassword) body.password = bossPassword;
+      await api(`/staff/${pinTarget.id}/pin`, { method: 'PUT', body });
+      if (usedPassword) {
+        localStorage.setItem(REAUTH_KEY, String(Date.now()));
+      }
       toast(`PIN updated for ${pinTarget.name}`, { tone: 'green' });
       setAccounts((prev) => prev?.map((a) => (a.id === pinTarget.id ? { ...a, has_pin: true } : prev)) || []);
       closePin();
     } catch (e) {
+      // Any failure (wrong password or an expired window) means the stored
+      // grant is no longer trustworthy — force a fresh re-confirm.
+      localStorage.removeItem(REAUTH_KEY);
       setPinError(e.message || 'PIN update failed — check your password.');
     } finally {
       setPinBusy(false);
+    }
+  };
+
+  // --- Accounts ---
+  const [deleting, setDeleting] = useState(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
+
+  const deleteAccount = async (account) => {
+    if (deletingBusy) return;
+    setDeletingBusy(true);
+    try {
+      await api(`/staff/${account.id}`, { method: 'DELETE' });
+      setAccounts((prev) => prev?.filter((a) => a.id !== account.id) || []);
+      toast(`Deleted ${account.name}`, { tone: 'green' });
+    } catch (e) {
+      toast(e.message || 'Failed to delete account', { tone: 'red' });
+    } finally {
+      setDeletingBusy(false);
+      setDeleting(null);
     }
   };
 
@@ -135,6 +171,16 @@ export function StaffSection() {
                       <KeyRoundIcon className="h-3.5 w-3.5" />
                       {a.has_pin ? 'Reset PIN' : 'Set PIN'}
                     </Button>
+                    {a.id !== session?.id && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title="Delete staff account"
+                        aria-label={`Delete ${a.name}`}
+                        onClick={() => setDeleting(a)}>
+                        <Trash2Icon className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -211,23 +257,31 @@ export function StaffSection() {
           </div>
           {pinErrors.pin && <FieldError>{pinErrors.pin}</FieldError>}
           {pinErrors.confirm && <FieldError>{pinErrors.confirm}</FieldError>}
-          <Field label="Your login password (re-auth)">
-            <input
-              type="password"
-              className={inputClass}
-              value={bossPassword}
-              onChange={(e) => setBossPassword(e.target.value)}
-              placeholder="Confirm your own password to proceed" />
-          </Field>
-          <p className="text-xs text-meta">
-            A stolen boss session alone cannot mint PINs — the password is checked server-side every time.
-          </p>
+          {pinReauthFresh ? (
+            <p className="text-xs text-meta">
+              Password confirmed recently — no re-auth needed within the next 30 minutes.
+            </p>
+          ) : (
+            <>
+              <Field label="Your login password (re-auth)">
+                <input
+                  type="password"
+                  className={inputClass}
+                  value={bossPassword}
+                  onChange={(e) => setBossPassword(e.target.value)}
+                  placeholder="Confirm your own password to proceed" />
+              </Field>
+              <p className="text-xs text-meta">
+                The password is checked server-side before the PIN is changed.
+              </p>
+            </>
+          )}
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" onClick={closePin} disabled={pinBusy}>Cancel</Button>
           <Button
             variant="dark"
-            disabled={pinBusy || !pinVal || !pinConfirm || !bossPassword || Object.keys(pinErrors).length > 0}
+            disabled={pinBusy || !pinVal || !pinConfirm || (!pinReauthFresh && !bossPassword) || Object.keys(pinErrors).length > 0}
             onClick={submitPIN}>
             {pinBusy ? 'Updating…' : 'Update PIN'}
           </Button>
@@ -243,6 +297,16 @@ export function StaffSection() {
         confirmLabel="Disable terminal"
         busy={!!disabling && !devices?.some((d) => d.id === disabling)}
         onConfirm={() => disableTerminal(devices.find((d) => d.id === disabling))} />
+
+      <ConfirmTyped
+        open={!!deleting}
+        onClose={() => !deletingBusy && setDeleting(null)}
+        title="Delete staff account?"
+        body={`${deleting?.name || 'This staff member'} will be removed from the team — their PIN, clock-in access and any approved-terminal ties go with them. This cannot be undone from this screen.`}
+        confirmWord="delete"
+        confirmLabel="Delete account"
+        busy={deletingBusy}
+        onConfirm={() => deleteAccount(deleting)} />
     </div>
   );
 }

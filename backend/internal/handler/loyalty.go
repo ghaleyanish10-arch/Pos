@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -41,6 +42,11 @@ func (h *LoyaltyHandler) Earn(c *gin.Context) {
 		return
 	}
 
+	if req.Points <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "points must be greater than zero"})
+		return
+	}
+
 	if err := h.repo.Earn(c.Request.Context(), req.GuestID, req.Points, req.Reason); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -56,7 +62,16 @@ func (h *LoyaltyHandler) Redeem(c *gin.Context) {
 		return
 	}
 
+	if req.Points <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "points must be greater than zero"})
+		return
+	}
+
 	if err := h.repo.Redeem(c.Request.Context(), req.GuestID, req.Points, req.Reason); err != nil {
+		if errors.Is(err, repo.ErrInsufficientPoints) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

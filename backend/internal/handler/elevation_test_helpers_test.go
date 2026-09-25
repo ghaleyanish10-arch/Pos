@@ -31,6 +31,12 @@ func doReqJSON(r *gin.Engine, method, path, token string, body any) *httptest.Re
 // userIDs maps test email -> user id, filled by registerAndLogin.
 var userIDs sync.Map
 
+// bossBranchSeed is the branch of the seeded admin in the CURRENT test's DB.
+// loginBoss captures it so registerAndLogin can register test staff under the
+// same branch — matching production (a manager account has a branch, and the
+// terminal enable flow binds the device to the APPROVER'S branch server-side).
+var bossBranchSeed string
+
 // uid returns the stored user id for a test email (set during registerAndLogin).
 func uid(email string) string {
 	v, _ := userIDs.Load(email)
@@ -50,7 +56,8 @@ func loginBoss(t *testing.T, r *gin.Engine) string {
 	}
 	var resp struct {
 		User struct {
-			ID string `json:"id"`
+			ID       string `json:"id"`
+			BranchID string `json:"branch_id"`
 		} `json:"user"`
 		Tokens struct {
 			AccessToken string `json:"access_token"`
@@ -63,6 +70,7 @@ func loginBoss(t *testing.T, r *gin.Engine) string {
 		t.Fatal("boss login missing token or user id")
 	}
 	userIDs.Store("admin@mesa.os", resp.User.ID)
+	bossBranchSeed = resp.User.BranchID
 	return resp.Tokens.AccessToken
 }
 

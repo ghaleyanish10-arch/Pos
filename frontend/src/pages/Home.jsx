@@ -57,13 +57,14 @@ const trackTitle = (t) => {
   return shortId(t?.id);
 };
 
-function Kpi({ label, value, meta, hero = false }) {
+function Kpi({ label, value, meta, note, hero = false }) {
   if (hero) {
     return (
       <div className="rounded-card p-6 lg:p-7 border border-ink bg-ink text-white">
         <p className="text-caption font-semibold text-white/60">{label}</p>
         <p className="mt-1.5 text-3xl font-extrabold tracking-tight text-white lg:text-[2rem]">{value}</p>
         {meta && <p className="mt-1 text-xs text-white/60">{meta}</p>}
+        {note && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-white/50">{note}</p>}
       </div>
     );
   }
@@ -72,6 +73,7 @@ function Kpi({ label, value, meta, hero = false }) {
       <p className="text-caption font-semibold text-meta">{label}</p>
       <p className="mt-1.5 text-2xl font-extrabold tracking-tight text-ink">{value}</p>
       {meta && <p className="mt-1 text-xs text-meta">{meta}</p>}
+      {note && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-accent">{note}</p>}
     </Card>
   );
 }
@@ -98,7 +100,7 @@ export function Home() {
   const { settings } = useSettings();
   const { tables, occupiedCount } = useTables();
   const { incoming: liveIncoming } = useOrders();
-  useElapsedClock(30000);
+  const now = useElapsedClock(30000);
 
   const [summary, setSummary] = useState(null);
   const [tickets, setTickets] = useState(null);
@@ -190,7 +192,7 @@ export function Home() {
       map.set(id, {
         ...t,
         status: status || t.status || 'incoming',
-        elapsed: t.elapsed || elapsedFrom(t.created_at),
+        elapsed: elapsedFrom(t.created_at, now),
         source
       });
     };
@@ -201,7 +203,7 @@ export function Home() {
     return [...map.values()]
       .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
       .slice(0, 5);
-  }, [liveIncoming, tickets]);
+  }, [liveIncoming, tickets, now]);
 
   const kitchen = useMemo(() => {
     const build = stations.map((s) => {
@@ -213,11 +215,11 @@ export function Home() {
         incoming: list.filter((t) => (t.status || 'incoming') === 'incoming').length,
         preparing: list.filter((t) => (t.status || 'incoming') === 'preparing').length,
         ready: list.filter((t) => (t.status || 'incoming') === 'ready').length,
-        late: list.filter((t) => isOverSLA(t.elapsed || elapsedFrom(t.created_at))).length
+        late: list.filter((t) => isOverSLA(elapsedFrom(t.created_at, now))).length
       };
     });
     return build;
-  }, [tickets, liveIncoming]);
+  }, [tickets, liveIncoming, now]);
 
   const occupancyPct = tables.length ? Math.round((occupiedCount / tables.length) * 100) : 0;
   const seated = tables.filter((t) => t.state === 'Seated' || t.state === 'Check dropped').length;
@@ -361,7 +363,8 @@ export function Home() {
           hero
           label="Today's sales"
           value={fmtRs(totalRevenue)}
-          meta={`${deltaPct !== null ? `${deltaPct >= 0 ? '+' : ''}${deltaPct}% vs previous period` : 'vs previous period'} · ${summary?.avg_order_value ? `avg ${fmtRs(summary.avg_order_value)} / order` : ''}`} />
+          meta={`${deltaPct !== null ? `${deltaPct >= 0 ? '+' : ''}${deltaPct}% vs previous period` : 'vs previous period'} · ${summary?.avg_order_value ? `avg ${fmtRs(summary.avg_order_value)} / order` : ''}`}
+          note="last 24 hours" />
         <Kpi
           label="Orders"
           value={summary?.total_orders || 0}
@@ -405,7 +408,7 @@ export function Home() {
                       </p>
                     </div>
                     <span className={`shrink-0 font-mono text-13 ${isOverSLA(t.elapsed) ? 'font-bold text-status-red' : 'text-meta'}`}>
-                      {t.elapsed || elapsedFrom(t.created_at)}
+                      {t.elapsed}
                     </span>
                   </li>
                 ))}
@@ -479,7 +482,7 @@ export function Home() {
       <div className="mb-6 grid gap-6 lg:grid-cols-2">
         <Card>
           <PanelTitle index="04" title="Sales trend" descriptor="Last 7 periods" right={
-            <Link to="/reports" className="text-13 font-semibold text-status-blue hover:text-ink transition-colors">Reports</Link>
+            can('/reports') && <Link to="/reports" className="text-13 font-semibold text-status-blue hover:text-ink transition-colors">Reports</Link>
           } />
           {maxRevenue > 0 ? (
             <TrendChart
@@ -504,7 +507,7 @@ export function Home() {
 
         <Card>
           <PanelTitle index="05" title="Top products" descriptor="Today" right={
-            <Link to="/reports" className="text-13 font-semibold text-status-blue hover:text-ink transition-colors">Details</Link>
+            can('/reports') && <Link to="/reports" className="text-13 font-semibold text-status-blue hover:text-ink transition-colors">Details</Link>
           } />
           {topProducts.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-10 text-meta">
@@ -668,7 +671,7 @@ export function Home() {
                     <span className="text-sm font-bold text-ink">{shortId(o.id)}</span>
                     <span className="ml-2 text-xs text-meta">{trackTitle(o)}</span>
                   </div>
-                  <span className="text-xs text-meta">{o.elapsed || elapsedFrom(o.created_at)}</span>
+                  <span className="text-xs text-meta">{o.elapsed}</span>
                 </div>
               ))}
             </div>

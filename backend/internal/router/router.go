@@ -74,6 +74,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	ticketH := handler.NewTicketHandler(ticketRepo)
 	txH := handler.NewTransactionHandler(txRepo)
 	txH.SetMailer(smtpMailer)
+	txH.SetEmail(resend)
 	txH.SetOrderRepo(orderRepo)
 	refundH := handler.NewRefundHandler(refundRepo)
 	refundH.SetElevationDeps(elevationRepo, auditRepo)
@@ -88,7 +89,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	loyaltyH := handler.NewLoyaltyHandler(loyaltyRepo)
 	marketingH := handler.NewMarketingHandler(marketingRepo)
 	storeH := handler.NewStoreHandler(storeRepo)
-	posH := handler.NewPOSHandler(posRepo)
+	posH := handler.NewPOSHandler(posRepo, bookingRepo)
 	fiscalH := handler.NewFiscalHandler(fiscalRepo)
 	recipeH := handler.NewRecipeHandler(recipeRepo)
 	poH := handler.NewPurchaseOrderHandler(poRepo)
@@ -124,47 +125,48 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	api.POST("/auth/forgot-password", authH.ForgotPassword)
 	api.POST("/auth/reset-password", authH.ResetPassword)
 
-		// Customer ordering (public: a scanned table QR or storefront link has
-		// no session). The order lands in the orders table and KDS as an
-		// incoming ticket, so staff Orders/KDS pick it up.
-		api.POST("/public/orders", orderH.CreatePublic)
+	// Customer ordering (public: a scanned table QR or storefront link has
+	// no session). The order lands in the orders table and KDS as an
+	// incoming ticket, so staff Orders/KDS pick it up.
+	api.POST("/public/orders", orderH.CreatePublic)
 
-		// Public business-owner signup + 6-digit email verification. The
-		// account can sign in immediately; the admin dashboard stays locked
-		// until a code is entered. The verify/resend pair is IP-throttled on
-		// top of the per-account 60s resend cooldown.
-		api.POST("/auth/signup", authH.Signup)
-		api.GET("/auth/providers", authH.Providers)
-		api.POST("/auth/verify-code", verifyLimit, authH.VerifyCode)
-		api.POST("/auth/resend-code", verifyLimit, authH.ResendCode)
-		api.POST("/auth/send-verification-code", verifyLimit, authH.SendVerificationCode)
+	// Public business-owner signup + 6-digit email verification. The
+	// account can sign in immediately; the admin dashboard stays locked
+	// until a code is entered. The verify/resend pair is IP-throttled on
+	// top of the per-account 60s resend cooldown.
+	api.POST("/auth/signup", authH.Signup)
+	api.GET("/auth/providers", authH.Providers)
+	api.POST("/auth/verify-code", verifyLimit, authH.VerifyCode)
+	api.POST("/auth/resend-code", verifyLimit, authH.ResendCode)
+	api.POST("/auth/send-verification-code", verifyLimit, authH.SendVerificationCode)
 
-		// Google OAuth — server-side code exchange; the secret never leaves here.
-		api.GET("/auth/google", authH.GoogleRedirect)
-		api.GET("/auth/google/callback", authH.GoogleCallback)
+	// Google OAuth — server-side code exchange; the secret never leaves here.
+	api.GET("/auth/google", authH.GoogleRedirect)
+	api.GET("/auth/google/callback", authH.GoogleCallback)
 
-		// PIN elevation (protected: requires a terminal session)
-		api.POST("/auth/elevate", authMW, elevationH.Elevate)
+	// PIN elevation (protected: requires a terminal session)
+	api.POST("/auth/elevate", authMW, elevationH.Elevate)
 
-		// Role switch (protected): a logged-in staff member re-enters their
-		// own PIN to re-wear the session as kitchen/cashier/manager/admin.
+	// Role switch (protected): a logged-in staff member re-enters their
+	// own PIN to re-wear the session as kitchen/cashier/manager/admin.
 
-		// Shared-terminal clock-in family — NOT a staff session: a terminal
-		// must be able to clock in before any staff session exists. The
-		// DeviceID middleware only captures the client-generated UUID for
-		// audit attribution; whether a device may use the family is decided
-		// per route by the `devices` approval table and per action by the
-		// staff PIN (roster/clock-in require an approved device, enable is
-		// how one becomes approved).
-		device := api.Group("")
-		device.Use(middleware.DeviceID())
-		{
-			device.GET("/staff/terminal-status", clockinH.TerminalStatus)
-			device.POST("/staff/terminal-enable", clockinH.TerminalEnable)
-			device.GET("/staff/roster", clockinH.Roster)
-			device.POST("/auth/clock-in", clockinH.ClockIn)
-			device.POST("/auth/clock-out", clockinH.ClockOut)
-		}
+	// Shared-terminal clock-in family — NOT a staff session: a terminal
+	// must be able to clock in before any staff session exists. The
+	// DeviceID middleware only captures the client-generated UUID for
+	// audit attribution; whether a device may use the family is decided
+	// per route by the `devices` approval table and per action by the
+	// staff PIN (roster/clock-in require an approved device, enable is
+	// how one becomes approved).
+	device := api.Group("")
+	device.Use(middleware.DeviceID())
+	{
+		device.GET("/staff/branches", branchesH.DeviceBranches)
+		device.GET("/staff/terminal-status", clockinH.TerminalStatus)
+		device.POST("/staff/terminal-enable", clockinH.TerminalEnable)
+		device.GET("/staff/roster", clockinH.Roster)
+		device.POST("/auth/clock-in", clockinH.ClockIn)
+		device.POST("/auth/clock-out", clockinH.ClockOut)
+	}
 
 	// Protected routes
 	protected := api.Group("")
@@ -182,6 +184,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/orders/:id", orderH.GetByID)
 		protected.PUT("/orders/:id", orderH.Update)
 		protected.DELETE("/orders/:id", middleware.RequireRole("Store Manager"), orderH.Delete)
+		protected.PUT("/orders/:id/transfer", orderH.Transfer)
 
 		// KDS Tickets
 		protected.GET("/kds/tickets", ticketH.List)
@@ -242,11 +245,19 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/staff", middleware.RequireRole("Store Manager"), verified, staffH.List)
 		protected.POST("/staff", middleware.RequireRole("Store Manager"), verified, staffH.Create)
 		protected.PUT("/staff/:id", middleware.RequireRole("Store Manager"), verified, staffH.Update)
+		// Deactivation is a real backend state, not a frontend-only toggle:
+		// the deactivated view lives at /staff/deactivated (static, registered
+		// before the :id routes it shares a prefix with), and deactivate/
+		// reactivate flip deactivated_at. Store-Manager-and-up like the roster.
+		protected.GET("/staff/deactivated", middleware.RequireRole("Store Manager"), verified, staffH.ListDeactivated)
+		protected.PUT("/staff/:id/deactivate", middleware.RequireRole("Store Manager"), verified, staffH.Deactivate)
+		protected.PUT("/staff/:id/reactivate", middleware.RequireRole("Store Manager"), verified, staffH.Reactivate)
 
 		// PIN management — boss-only set/reset with password re-auth
 		protected.GET("/staff/pin-holders", elevationH.ListPINHolders)
 		protected.GET("/staff/pin-accounts", middleware.RequireRole("Corporate Admin"), verified, elevationH.ListUsers)
 		protected.PUT("/staff/:id/pin", middleware.RequireRole("Corporate Admin"), verified, elevationH.SetPIN)
+		protected.DELETE("/staff/:id", middleware.RequireRole("Corporate Admin"), verified, elevationH.DeleteAccount)
 
 		// Terminal (approved device) management — boss-only. Managers approve
 		// terminals with their PIN at the terminal itself; only the boss can
@@ -328,6 +339,11 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.PUT("/pos/tables/:id", posH.UpdateTableState)
 		protected.GET("/pos/tables/:id/bill", posH.GetTableBill)
 		protected.PUT("/pos/tables/:id/close", posH.CloseTable)
+		protected.PUT("/pos/tables/:id/merge", orderH.Merge)
+		protected.POST("/pos/tables/:id/drop-check", posH.DropCheck)
+		protected.POST("/pos/tables/:id/clear-check", posH.ClearCheck)
+		protected.POST("/pos/tables/:id/flag", posH.Flag)
+		protected.POST("/pos/tables/:id/unflag", posH.Unflag)
 
 		// Fiscal
 		protected.GET("/fiscal", middleware.RequireRole("Corporate Admin"), verified, fiscalH.List)
@@ -339,6 +355,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/recipes/:id", middleware.RequireRole("Store Manager"), recipeH.GetByID)
 		protected.POST("/recipes", middleware.RequireRole("Store Manager"), recipeH.Create)
 		protected.PUT("/recipes/:id", middleware.RequireRole("Store Manager"), recipeH.Update)
+		protected.DELETE("/recipes/:id", middleware.RequireRole("Store Manager"), recipeH.Delete)
 
 		// Purchase Orders
 		protected.GET("/purchase-orders", middleware.RequireRole("Store Manager"), poH.List)

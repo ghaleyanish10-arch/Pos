@@ -14,6 +14,9 @@ func registerAndLogin(t *testing.T, r *gin.Engine, adminToken, name, email, pass
 	t.Helper()
 	w := doReq(r, http.MethodPost, "/api/v1/auth/register", adminToken, map[string]string{
 		"name": name, "email": email, "password": password, "role": role,
+		// Test staff belong to the boss's branch (like production staff) —
+		// never branch-less, so terminal enablement can bind to their branch.
+		"branch_id": bossBranchSeed,
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("register %s returned %d: %s", email, w.Code, w.Body.String())

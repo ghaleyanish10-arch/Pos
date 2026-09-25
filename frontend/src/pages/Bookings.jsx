@@ -86,7 +86,7 @@ function BookingCard({ res, top, height: cardHeight, animate, onOpen, onQuickAct
       className="group absolute left-0 w-full cursor-pointer overflow-hidden rounded-xl border border-line bg-canvas p-3 transition-[height,border-color] duration-300 ease-soft hover:border-ink/30 z-10"
       style={{ top, height }}>
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-bold leading-tight text-ink truncate">
+        <h3 className="text-sm font-bold leading-tight text-ink truncate" title={res.guest_name}>
           {res.guest_name}
         </h3>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -117,20 +117,20 @@ function BookingCard({ res, top, height: cardHeight, animate, onOpen, onQuickAct
           <StatusDot tone={statusTone[res.status]} className="mt-0.5" />
         </div>
       </div>
-      <p className="mt-1 text-xs text-meta truncate">
-        {displayTime && <span className="font-semibold text-ink">{displayTime} · </span>}
-        {res.covers} covers · {res.duration}h
+      <p className="mt-1 flex items-center gap-1.5 text-xs text-meta truncate">
+        {displayTime && <span className="font-semibold text-ink">{displayTime}</span>}
+        <span className="flex min-w-0 items-center gap-1" title={`${res.covers} ${res.covers > 1 ? 'covers' : 'cover'} · ${res.duration}h`}>
+          <UsersIcon className="h-3.5 w-3.5 shrink-0" />
+          <span>{res.covers}</span>
+        </span>
       </p>
       <div className="mt-1.5 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="rounded-md bg-tint-blue px-1.5 py-0.5 text-micro font-semibold capitalize text-status-blue">
-            {getTimePeriod(res.time)}
-          </span>
-          <p className="truncate text-caption font-semibold text-meta">
-            {STATUS_LABELS[res.status] || res.status}
-          </p>
-        </div>
-        <span className="text-micro text-meta">Details →</span>
+        <p className="truncate text-caption font-semibold text-meta">
+          {STATUS_LABELS[res.status] || res.status}
+        </p>
+        <span className="shrink-0 text-micro text-meta transition-opacity duration-150 ease-soft lg:opacity-0 lg:group-hover:opacity-100">
+          Details →
+        </span>
       </div>
     </article>
   );
@@ -382,8 +382,10 @@ export function Bookings() {
           const locals = readStoredReservations().filter((r) => !apiKeys.has(`${r.table}|${r.time}`));
           setReservationList([...apiRows, ...locals]);
         }
-        if (wlRes?.data && wlRes.data.length > 0) {
-          setWaitlistState(wlRes.data.map((w) => ({
+        // An API answer — even an empty/null waitlist — replaces the demo
+        // seed; the seed only survives the request-error (offline) path.
+        if (wlRes?.data !== undefined) {
+          setWaitlistState((wlRes.data || []).map((w) => ({
             id: w.id,
             name: w.guest_name || w.name || 'Party',
             party: w.covers || 2,
@@ -643,18 +645,19 @@ export function Bookings() {
     setSelectedReservation(null);
   }
 
-  function handleNotifyWaitlist(name) {
-    const entry = waitlistState.find((w) => w.name === name);
+  function handleNotifyWaitlist(id) {
+    const entry = waitlistState.find((w) => w.id === id);
     if (entry?.id) {
       api(`/waitlist/${entry.id}/notify`, { method: 'PUT' }).catch(() => {});
     }
-    setWaitlistState((p) => p.filter((w) => w.name !== name));
-    toast(`${name} · reminder sent`, { tone: 'dark' });
+    setWaitlistState((p) => p.filter((w) => w.id !== id));
+    toast(`${entry?.name || 'Party'} · reminder sent`, { tone: 'dark' });
   }
 
-  function handleSeatWaitlist(name) {
-    setWaitlistState((p) => p.filter((w) => w.name !== name));
-    toast(`${name} seated`, { tone: 'green' });
+  function handleSeatWaitlist(id) {
+    const entry = waitlistState.find((w) => w.id === id);
+    setWaitlistState((p) => p.filter((w) => w.id !== id));
+    toast(`${entry?.name || 'Party'} seated`, { tone: 'green' });
   }
 
   return (
@@ -877,7 +880,7 @@ export function Bookings() {
         <div className="scroll-thin flex gap-3 overflow-x-auto pb-2">
           {waitlistState.map((w) =>
           <article
-            key={w.name}
+            key={w.id}
             onClick={() => setProfile(profileFor(w.name))}
             className="min-w-[230px] shrink-0 cursor-pointer rounded-card border border-line bg-surface p-4 transition-colors duration-150 ease-soft hover:border-ink/30">
               <div className="flex items-start justify-between gap-2">
@@ -888,10 +891,10 @@ export function Bookings() {
                 Waiting {w.waited} · quoted {w.quoted}
               </p>
               <div className="mt-3 flex gap-2">
-                <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleNotifyWaitlist(w.name); }}>
+                <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleNotifyWaitlist(w.id); }}>
                   Notify
                 </Button>
-                <Button size="sm" variant="green" onClick={(e) => { e.stopPropagation(); handleSeatWaitlist(w.name); }}>
+                <Button size="sm" variant="green" onClick={(e) => { e.stopPropagation(); handleSeatWaitlist(w.id); }}>
                   Seat
                 </Button>
               </div>

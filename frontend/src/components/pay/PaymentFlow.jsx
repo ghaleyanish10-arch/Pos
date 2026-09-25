@@ -153,9 +153,10 @@ export function PaymentFlow({
         setFailMessage(`${GATEWAYS.find((g) => g.key === method)?.label || method} was declined or the request failed.`);
         setPhase('failed');
       }
-    } catch {
+    } catch (err) {
       playSound('paymentFailed');
-      setFailMessage('The payment could not be confirmed. No charge was made.');
+      console.error('PaymentFlow confirm failed:', err);
+      setFailMessage(err?.message || 'The payment could not be confirmed. No charge was made.');
       setPhase('failed');
     } finally {
       busyRef.current = false;
@@ -175,9 +176,10 @@ export function PaymentFlow({
         setFailMessage('Split payment could not be confirmed. Nothing was charged.');
         setPhase('failed');
       }
-    } catch {
+    } catch (err) {
       playSound('paymentFailed');
-      setFailMessage('Split payment failed. Nothing was charged.');
+      console.error('PaymentFlow confirmSplit failed:', err);
+      setFailMessage(err?.message || 'Split payment failed. Nothing was charged.');
       setPhase('failed');
     } finally {
       busyRef.current = false;

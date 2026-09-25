@@ -46,3 +46,16 @@ type CreateOrderItemReq struct {
 type UpdateOrderRequest struct {
 	Status string `json:"status"`
 }
+
+// TransferOrderRequest moves an open order to another floor table. TableID
+// accepts the target's table name ("T4") or its UUID.
+type TransferOrderRequest struct {
+	TableID string `json:"table_id"`
+}
+
+// MergeTablesRequest folds the SOURCE table's open check into the target table
+// (the route's :id), combining both parties into one check on one floor card.
+// SourceTableID accepts the source's table name ("T8") or its UUID.
+type MergeTablesRequest struct {
+	SourceTableID string `json:"source_table_id"`
+}

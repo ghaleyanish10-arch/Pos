@@ -12,6 +12,10 @@ type UpdateTableStateRequest struct {
 	Detail string `json:"detail"`
 }
 
+type FlagTableRequest struct {
+	Note string `json:"note"`
+}
+
 type CheckoutRequest struct {
 	TableID string `json:"table_id"`
 	Method  string `json:"method" binding:"required"`

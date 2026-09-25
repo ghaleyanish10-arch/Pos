@@ -150,7 +150,7 @@ func TestAuthServiceLoginAndRegister(t *testing.T) {
 
 	svc := auth.NewService(pool)
 
-	id, email, role, branchID, err := svc.Login(ctx, "admin@mesa.os", "admin123")
+	id, email, role, branchID, _, err := svc.Login(ctx, "admin@mesa.os", "admin123")
 	if err != nil {
 		t.Fatalf("Login with seeded admin failed: %v", err)
 	}
@@ -158,10 +158,10 @@ func TestAuthServiceLoginAndRegister(t *testing.T) {
 		t.Errorf("unexpected login result: id=%q email=%q role=%q branch=%q", id, email, role, branchID)
 	}
 
-	if _, _, _, _, err := svc.Login(ctx, "admin@mesa.os", "wrong-password"); err == nil {
+	if _, _, _, _, _, err := svc.Login(ctx, "admin@mesa.os", "wrong-password"); err == nil {
 		t.Fatal("expected login failure for wrong password")
 	}
-	if _, _, _, _, err := svc.Login(ctx, "nobody@mesa.os", "admin123"); err == nil {
+	if _, _, _, _, _, err := svc.Login(ctx, "nobody@mesa.os", "admin123"); err == nil {
 		t.Fatal("expected login failure for unknown user")
 	}
 

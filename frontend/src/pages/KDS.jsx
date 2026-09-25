@@ -53,6 +53,10 @@ export function KDS() {
   const [clearPassOpen, setClearPassOpen] = useState(false);
   const soundRef = useRef(soundOn);
   soundRef.current = soundOn;
+  // Ids the cook completed locally. A poll snapshot taken before the 'served'
+  // PUT landed would otherwise resurrect a just-cleared ticket; these are
+  // dropped from every fresh snapshot.
+  const settledRef = useRef(new Set());
 
   // 1-second heartbeat so every ticket's timer ticks live.
   useEffect(() => {
@@ -70,7 +74,9 @@ export function KDS() {
         // 'new' — the "kitchen reverts to old order data" bug. Merge by id and
         // only ever let the server truth ADVANCE a status; never regress one
         // the cook just bumped (Fire/ready/clear are all persisted server-side).
-        const fresh = list.length ? list.map(normalizeTicket) : null;
+        const fresh = list.length
+          ? list.map(normalizeTicket).filter((d) => !settledRef.current.has(d.id))
+          : null;
         if (!fresh) return prev || [];
         const rank = { new: 0, preparing: 1, ready: 2, closed: 3, done: 3 };
         const before = prev || [];
@@ -221,11 +227,26 @@ export function KDS() {
   };
 
   const bumpTicket = (t) => {
+    settledRef.current.add(t.id);
     setTickets((prev) => (prev || []).filter((x) => x.id !== t.id));
     play('orderStatus');
     toast(`Ticket ${t.id} cleared`, {
-      undo: () => setTickets((prev) => [...(prev || []), t])
+      undo: () => {
+        settledRef.current.delete(t.id);
+        setTickets((prev) => (prev || []).filter((x) => x.id !== t.id).concat([t]));
+        api(`/kds/tickets/${t.id}/bump`, { method: 'PUT', body: { status: 'ready' } })
+          .then(() => window.dispatchEvent(new CustomEvent('mesa-order-update')))
+          .catch(() => {});
+      }
     });
+    api(`/kds/tickets/${t.id}/bump`, { method: 'PUT', body: { status: 'served' } })
+      .then(() => window.dispatchEvent(new CustomEvent('mesa-order-update')))
+      .catch(() => {
+        if (!settledRef.current.has(t.id)) return;
+        settledRef.current.delete(t.id);
+        setTickets((prev) => (prev || []).filter((x) => x.id !== t.id).concat([t]));
+        toast(`Complete failed — ticket ${t.id} is back on the board`, { tone: 'red' });
+      });
   };
 
   const recall = (t) => {

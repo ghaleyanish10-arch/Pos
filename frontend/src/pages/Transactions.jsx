@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BanknoteIcon, CalendarIcon, CreditCardIcon, QrCodeIcon, ReceiptIcon, SearchXIcon, SendIcon } from
+import { BanknoteIcon, CalendarIcon, CreditCardIcon, PrinterIcon, QrCodeIcon, ReceiptIcon, SearchXIcon, SendIcon } from
 'lucide-react';
 import { PageHeader } from '../components/ui/Card';
 import { Table, TableWrap, Td, Th, Tr } from '../components/ui/Table';
@@ -13,6 +13,8 @@ import { Dialog } from '../components/ui/Dialog';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
 import { useTables } from '../state/TableContext';
+import { useSettings } from '../state/SettingsContext';
+import { printReceiptHtml } from '../utils/printReceipt';
 import { transactions as mockTransactions } from '../data/sell';
 
 const methodIcon = {
@@ -95,6 +97,7 @@ function breakdownFor(t) {
 
 export function Transactions() {
   const { labelOf } = useTables();
+  const { settings } = useSettings();
   const [method, setMethod] = useState('All');
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(null);
@@ -110,7 +113,8 @@ export function Transactions() {
       try {
         const res = await api('/transactions');
         if (!cancelled) setTxList(res?.data || []);
-      } catch {
+      } catch (err) {
+        console.error('Transactions load failed:', err);
         if (!cancelled) setTxList(mockTransactions);
       }
     })();
@@ -195,6 +199,40 @@ export function Transactions() {
       'Mesa OS · Restaurant POS'
     ].join('\n');
     return `mailto:${to}?subject=${encodeURIComponent(`Payment receipt ${String(t.id).slice(0, 8).toUpperCase()} — ${fmtTxAmount(t.amount)}`)}&body=${encodeURIComponent(body)}`;
+  }
+
+  function printActiveReceipt() {
+    const { lines, tax } = breakdownFor(active);
+    const isMock = typeof active.amount === 'string';
+    const itemsTotal = lines.reduce((s, l) => s + l.qty * l.price, 0);
+    // Service charge is not tracked per transaction here, so the ledger omits
+    // it rather than printing a fabricated figure. Certification is read from
+    // the real row: a Pending receipt must not claim revenue certification.
+    const ok = printReceiptHtml({
+      title: settings.businessName,
+      subtitle: `${settings.city} · VAT ${settings.vatNo}`,
+      subline: txTable(active) ? `Table ${labelOf(txTable(active))}` : (active.ref || String(active.id).slice(0, 8).toUpperCase()),
+      items: lines.map((l) => [`${l.qty}× ${l.name}`, `Rs ${(l.qty * l.price).toLocaleString('en-IN')}`]),
+      ledger: [
+        ['Subtotal', `Rs ${itemsTotal.toLocaleString('en-IN')}`],
+        ['VAT 13%', `Rs ${tax.toLocaleString('en-IN')}`]
+      ],
+      total: fmtTxAmount(active.amount),
+      paidBy: methodLabel(active.method),
+      paidAt: fmtTxTime(txTime(active)),
+      footerLines: [
+        `Receipt ${String(active.id).slice(0, 8).toUpperCase()} · Recorded in Transactions`,
+        (isMock ? active.certified === 'Certified' : active.certified === true)
+          ? 'Nepal Revenue certified'
+          : 'Certification pending — not yet filed'
+      ],
+      thanks: 'Thank you, visit again'
+    });
+    if (ok) {
+      toast.success('Receipt printed');
+    } else {
+      toast.error('Printing was blocked by the browser — try again.');
+    }
   }
 
   const rows = useMemo(
@@ -309,13 +347,20 @@ export function Transactions() {
         subtitle={[txTime(active) && fmtTxTime(txTime(active)), active.ref || null, txStatus(active) || null].filter(Boolean).join(' · ') || 'Transaction details'}
         footer={
         <>
+            <Button
+              variant="dark"
+              full
+              icon={<PrinterIcon className="h-4 w-4" />}
+              onClick={printActiveReceipt}>
+              Print
+            </Button>
             {active.status === 'Success' &&
             <Button variant="green" full onClick={handleRefund}>
                 Refund
               </Button>
             }
             <Button
-              variant="dark"
+              variant="outline"
               full
               icon={<SendIcon className="h-4 w-4" />}
               onClick={() => {

@@ -91,7 +91,12 @@ export function MenuProvider({ children }) {
             setItems((prev) => prev.map((it) => (it.name === local.name && !it.id ? { ...it, id: created.id } : it)));
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          // The server rejected the creation: take the phantom item back off
+          // the menu everywhere. Keeping it would show (and let staff sell)
+          // something the store never received.
+          setItems((prev) => prev.filter((it) => it !== local));
+        });
     }
     return local;
   }, [catIdByName]);
@@ -109,7 +114,11 @@ export function MenuProvider({ children }) {
           photo_url: item.photo || '',
           available: !!item.available
         }
-      }).catch(() => {});
+      }).catch(() => {
+        // Save failed — restore the item's last-known server state so the
+        // register prices and availability match reality.
+        setItems((prev) => prev.map((it) => (it.id === prevItem.id ? prevItem : it)));
+      });
     }
   }, [items, catIdByName]);
 
@@ -137,6 +146,12 @@ export function MenuProvider({ children }) {
     const resolvedCategory = patch.category_id
       ? catIdByName[patch.category_id] || patch.category_id
       : undefined;
+    // Snapshot the affected items so a failed save can be rolled back instead
+    // of leaving prices/availability different from what the store holds.
+    const prevById = {};
+    items.forEach((it) => {
+      if (ids.includes(it.id)) prevById[it.id] = it;
+    });
     setItems((prev) => prev.map((it) => (ids.includes(it.id) ? { ...it, ...patch, ...pricePatch(it) } : it)));
     try {
       await api('/menu/bulk', {
@@ -151,9 +166,9 @@ export function MenuProvider({ children }) {
         }
       });
     } catch {
-      // Local state already reflects the change; server sync retried on reload.
+      setItems((prev) => prev.map((it) => (prevById[it.id] ? prevById[it.id] : it)));
     }
-  }, [catIdByName]);
+  }, [catIdByName, items]);
 
   const value = useMemo(
     () => ({ items, categories, categoriesById: catIdByName, addItem, updateItem, removeItem, bulkUpdate }),

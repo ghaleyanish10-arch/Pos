@@ -11,6 +11,7 @@ type StoreSettings struct {
 	Theme          string          `json:"theme"`
 	DeliveryZones  json.RawMessage `json:"delivery_zones"`
 	PaymentMethods json.RawMessage `json:"payment_methods"`
+	TaxRate        *float64        `json:"tax_rate"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
@@ -18,4 +19,5 @@ type UpdateStoreSettingsRequest struct {
 	Theme          string          `json:"theme"`
 	DeliveryZones  json.RawMessage `json:"delivery_zones"`
 	PaymentMethods json.RawMessage `json:"payment_methods"`
+	TaxRate        *float64        `json:"tax_rate"`
 }

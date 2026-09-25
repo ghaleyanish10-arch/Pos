@@ -24,18 +24,40 @@ export function ClockIn() {
   const [error, setError] = useState('');
   const [shake, setShake] = useState(0);
   const [now, setNow] = useState(new Date());
+  const [email, setEmail] = useState('');
+  const [emailSetup, setEmailSetup] = useState(false);
+  const [branch, setBranch] = useState(() => localStorage.getItem('mesa_terminal_branch') || '');
+  const [branchOptions, setBranchOptions] = useState([]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const status = await api('/staff/terminal-status');
+        // A terminal that was previously approved remembers its branch and
+        // can re-declare it when the approvers list is needed (e.g. after a
+        // boss disables it). A brand-new terminal sends none — and gets NO
+        // cross-tenant approver list, only first-run setup (see below).
+        const cachedBranch = localStorage.getItem('mesa_terminal_branch') || '';
+        const status = await api(
+          '/staff/terminal-status' + (cachedBranch ? `?branch_id=${cachedBranch}` : '')
+        );
         if (!alive) return;
         setEnabled(Boolean(status?.enabled));
         setApprovers(status?.approvers || []);
         if (status?.enabled) {
-          const res = await api('/staff/roster');
-          if (alive) setRoster(res?.data || []);
+          try {
+            const res = await api('/staff/roster');
+            if (alive) setRoster(res?.data || []);
+          } catch (e) {
+            if (alive && (e.status === 403 || e.status === 409)) {
+              // Terminal is approved but not bound to a branch yet — setup
+              // state, not a roster.
+              setEnabled(false);
+              setApprovers([]);
+            } else if (alive) {
+              setFatal('Could not reach the server. Check the terminal connection.');
+            }
+          }
         }
       } catch (e) {
         if (alive) {
@@ -45,6 +67,14 @@ export function ClockIn() {
         if (alive) setLoading(false);
       }
     })();
+    // Branch picker (id + name only) for first-run setup: the operator must
+    // declare which branch this terminal serves before it can be approved.
+    // Best-effort — a failed fetch degrades to the cached branch.
+    api('/staff/branches')
+      .then((branches) => {
+        if (alive) setBranchOptions(branches?.data || []);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -65,35 +95,61 @@ export function ClockIn() {
   const backspace = () => setPins((p) => p.slice(0, -1));
 
   const submit = async () => {
-    if (!selected || pins.length < 4 || busy) return;
+    if (!enabled && !selected && !(emailSetup && email.trim())) return;
+    if (!enabled && !branch) {
+      setError('Choose the branch this terminal serves first.');
+      setShake((s) => s + 1);
+      return;
+    }
+    if (pins.length < 4 || busy) return;
     setBusy(true);
     setError('');
     try {
       if (enabled) {
         await clockIn(selected.id, pins);
       } else {
-        await api('/staff/terminal-enable', {
-          method: 'POST',
-          body: { user_id: selected.id, pin: pins, device_id: getDeviceId() }
-        });
+        const body = selected
+          ? { user_id: selected.id, pin: pins, device_id: getDeviceId(), branch_id: branch }
+          : { email: email.trim(), pin: pins, device_id: getDeviceId(), branch_id: branch };
+        const res = await api('/staff/terminal-enable', { method: 'POST', body });
+        // Remember this terminal's branch so the setup screen can show its
+        // own approvers even after a re-approval, and the roster stays scoped.
+        if (res?.device?.branch_id) {
+          localStorage.setItem('mesa_terminal_branch', res.device.branch_id);
+        }
         // Approved: continue straight into the normal clock-in roster, no reload.
-        const res = await api('/staff/roster');
-        setRoster(res?.data || []);
+        let rosterData = res?.roster || [];
+        try {
+          const roster = await api('/staff/roster');
+          rosterData = roster?.data || [];
+        } catch (_) {
+          // roster fetch is best-effort here; the terminal is now enabled
+        }
+        setRoster(rosterData);
         setEnabled(true);
         setSetupOpen(false);
         setSelected(null);
+        setEmailSetup(false);
         setPins('');
         setBusy(false);
       }
     } catch (e) {
       setError(
-        e.status === 423
-          ? 'PIN locked after too many attempts. Ask a manager to reset it.'
-          : e.status === 403
-            ? 'Only a manager or boss can approve this terminal.'
-            : e.status === 401
-              ? 'That PIN did not match. Try again.'
-              : (e.message || 'Could not reach the server — check the terminal connection.')
+        e.code === 'TERMINAL_BRANCH_MISMATCH'
+          ? 'That account belongs to a different branch than the one this terminal is set to. Pick the right branch and try again.'
+          : e.code === 'TERMINAL_BRANCH_REQUIRED'
+            ? 'Choose the branch this terminal serves first.'
+            : e.status === 423
+              ? 'PIN locked after too many attempts. Ask a manager to reset it.'
+              : e.status === 403
+                ? 'Only a manager or boss can approve this terminal.'
+                : e.status === 401
+                  ? 'That PIN did not match. Try again.'
+                  : e.status === 409
+                    ? 'This terminal is not linked to a branch yet — ask a branch manager to approve it.'
+                    : e.status === 400
+                      ? 'Your account is not linked to a branch — a branch manager must approve this terminal.'
+                      : (e.message || 'Could not reach the server — check the terminal connection.')
       );
       setShake((s) => s + 1);
       setPins('');
@@ -103,6 +159,8 @@ export function ClockIn() {
 
   const cancel = () => {
     setSelected(null);
+    setEmailSetup(false);
+    setEmail('');
     setPins('');
     setError('');
   };
@@ -138,23 +196,28 @@ export function ClockIn() {
             <ShieldCheckIcon className="h-8 w-8 text-meta" />
             <p className="text-sm font-semibold text-ink">{fatal}</p>
           </div>
-        ) : enabled === false && !selected && !setupOpen ? (
+        ) : enabled === false && !selected && !emailSetup && !setupOpen ? (
           <div className="flex max-w-md flex-col items-center gap-3 rounded-2xl border border-line bg-surface p-8 text-center">
             <ShieldCheckIcon className="h-8 w-8 text-meta" />
             <p className="text-sm font-semibold text-ink">
               This terminal hasn't been approved for this branch yet.
             </p>
             <p className="text-caption leading-relaxed text-meta">
-              A manager or boss needs to approve this terminal before staff can clock in here.
+              {approvers.length === 0
+                ? 'This terminal is not linked to a branch, so approvers can\'t be listed here. Choose the branch and approve it from the terminal by entering a Store Manager or boss account email.'
+                : 'A manager or boss needs to approve this terminal before staff can clock in here.'}
             </p>
             <button
               type="button"
-              onClick={() => setSetupOpen(true)}
+              onClick={() => {
+                setSetupOpen(true);
+                setEmailSetup(approvers.length === 0);
+              }}
               className="btn btn-primary btn-lg mt-1">
               <Settings2Icon className="h-4 w-4" /> Set up this terminal
             </button>
           </div>
-        ) : selected ? (
+        ) : selected || (emailSetup && email) ? (
           <motion.section
             key={selected.id}
             initial={{ opacity: 0, y: 8 }}
@@ -176,7 +239,7 @@ export function ClockIn() {
             <div className="rounded-2xl border border-line bg-surface p-6">
               <div className="mb-5 flex items-center gap-3">
                 <span className="flex h-11 w-11 items-center justify-center rounded-full bg-ink/5 text-sm font-bold text-ink">
-                  {selected.name
+                  {(selected?.name || email)
                     .split(' ')
                     .map((p) => p[0])
                     .slice(0, 2)
@@ -184,8 +247,10 @@ export function ClockIn() {
                     .toUpperCase()}
                 </span>
                 <div>
-                  <p className="text-sm font-semibold text-ink">{selected.name}</p>
-                  <p className="text-caption text-meta">{roleMeta(selected.role).label}</p>
+                  <p className="text-sm font-semibold text-ink">{selected?.name || email}</p>
+                  <p className="text-caption text-meta">
+                    {emailSetup ? 'Account email' : roleMeta(selected.role).label}
+                  </p>
                 </div>
               </div>
 
@@ -240,6 +305,65 @@ export function ClockIn() {
               </button>
             </div>
           </motion.section>
+        ) : !enabled && approvers.length === 0 ? (
+          <section className="w-full max-w-sm">
+            <h2 className="mb-3 text-caption font-semibold text-meta">
+              This terminal isn't linked to a branch yet
+            </h2>
+            <div className="rounded-2xl border border-line bg-surface p-6">
+              <p className="mb-4 text-caption leading-relaxed text-meta">
+                Choose the branch this terminal serves, then enter the work
+                email of the account that will approve it (a Store Manager or
+                the boss). The account must belong to that branch.
+              </p>
+              <label className="mb-2 block text-caption font-semibold text-meta">
+                Branch
+              </label>
+              <select
+                value={branch}
+                onChange={(e) => {
+                  setBranch(e.target.value);
+                  setError('');
+                }}
+                className="mb-4 w-full rounded-xl border border-line bg-canvas px-4 py-3 text-sm text-ink outline-none focus:border-ink/40">
+                <option value="">Choose a branch…</option>
+                {branchOptions.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="w-full rounded-xl border border-line bg-canvas px-4 py-3 text-sm text-ink outline-none focus:border-ink/40"
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError('');
+                }}
+                placeholder="manager@yourplace.com"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && email.trim() && branch) setEmailSetup(true);
+                }}
+                autoFocus />
+              {error && (
+                <p className="mt-2 text-caption font-semibold text-status-red">{error}</p>
+              )}
+              <button
+                type="button"
+                disabled={!email.trim() || !branch || busy}
+                onClick={() => setEmailSetup(true)}
+                className="btn btn-primary btn-lg mt-4 w-full">
+                Continue
+              </button>
+              <button
+                type="button"
+                onClick={cancel}
+                className="btn btn-ghost btn-lg mt-2 w-full">
+                Cancel
+              </button>
+            </div>
+          </section>
         ) : (
           <section className="w-full max-w-2xl">
             <h2 className="mb-3 text-caption font-semibold text-meta">

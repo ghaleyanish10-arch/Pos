@@ -136,18 +136,21 @@ func (m *Mailer) SendVerificationCode(to, name, code string) error {
 
 // SendInvoiceEmail composes and sends the invoice receipt for an invoice.
 func (m *Mailer) SendInvoiceEmail(to, invoiceRef, party string, amount float64, dueDate time.Time, lines []Line) error {
-	subject := fmt.Sprintf("Invoice %s — %s", invoiceRef, formatRs(amount))
+	subject := fmt.Sprintf("Invoice %s — %s", invoiceRef, FormatRs(amount))
 	return m.Send(to, subject, invoiceText(invoiceRef, party, amount, dueDate, lines), invoiceHTML(invoiceRef, party, amount, dueDate, lines))
 }
 
 // SendReceiptEmail sends a payment receipt for a POS transaction.
 // tableName is the dine-in table the order was served at ("" for takeaway/delivery).
 func (m *Mailer) SendReceiptEmail(to, ref, method, tableName string, amount float64, when time.Time, lines []Line, fiscalID string) error {
-	subject := fmt.Sprintf("Payment receipt %s — %s", ref, formatRs(amount))
-	return m.Send(to, subject, receiptText(ref, method, tableName, amount, when, lines, fiscalID), receiptHTML(ref, method, tableName, amount, when, lines, fiscalID))
+	subject := fmt.Sprintf("Payment receipt %s — %s", ref, FormatRs(amount))
+	return m.Send(to, subject, ReceiptText(ref, method, tableName, amount, when, lines, fiscalID), ReceiptHTML(ref, method, tableName, amount, when, lines, fiscalID))
 }
 
-func receiptText(ref, method, tableName string, amount float64, when time.Time, lines []Line, fiscalID string) string {
+// ReceiptText builds the plain-text payment receipt body. Unexported in one
+// place so the Resend path (email.Service) and the SMTP path share the same
+// content instead of maintaining two versions.
+func ReceiptText(ref, method, tableName string, amount float64, when time.Time, lines []Line, fiscalID string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Hello,\n\nThank you for your payment. Here is your receipt.\n\n")
 	fmt.Fprintf(&b, "Receipt: %s\n", ref)
@@ -159,10 +162,10 @@ func receiptText(ref, method, tableName string, amount float64, when time.Time, 
 	if len(lines) > 0 {
 		b.WriteString("\nItems:\n")
 		for _, l := range lines {
-			fmt.Fprintf(&b, "  - %s x%d = %s\n", l.Description, l.Qty, formatRs(l.UnitPrice*float64(l.Qty)))
+			fmt.Fprintf(&b, "  - %s x%d = %s\n", l.Description, l.Qty, FormatRs(l.UnitPrice*float64(l.Qty)))
 		}
 	}
-	fmt.Fprintf(&b, "\nTotal paid: %s\n", formatRs(amount))
+	fmt.Fprintf(&b, "\nTotal paid: %s\n", FormatRs(amount))
 	if fiscalID != "" {
 		fmt.Fprintf(&b, "Fiscal ID: %s\n", fiscalID)
 	}
@@ -170,12 +173,12 @@ func receiptText(ref, method, tableName string, amount float64, when time.Time, 
 	return b.String()
 }
 
-func receiptHTML(ref, method, tableName string, amount float64, when time.Time, lines []Line, fiscalID string) string {
+func ReceiptHTML(ref, method, tableName string, amount float64, when time.Time, lines []Line, fiscalID string) string {
 	var rows strings.Builder
 	for _, l := range lines {
 		fmt.Fprintf(&rows,
 			"<tr><td style=\"padding:6px 12px;border-bottom:1px solid #eee\">%s</td><td style=\"padding:6px 12px;border-bottom:1px solid #eee;text-align:center\">%d</td><td style=\"padding:6px 12px;border-bottom:1px solid #eee;text-align:right\">%s</td></tr>",
-			l.Description, l.Qty, formatRs(l.UnitPrice*float64(l.Qty)))
+			l.Description, l.Qty, FormatRs(l.UnitPrice*float64(l.Qty)))
 	}
 	itemsTable := ""
 	if rows.Len() > 0 {
@@ -202,7 +205,7 @@ func receiptHTML(ref, method, tableName string, amount float64, when time.Time, 
   Total paid: <strong style="font-size:18px">%s</strong>%s</p>
   %s
   <p style="color:#666;font-size:13px">Thank you for dining with us.</p>
-</div>`, ref, when.Format("02 Jan 2006, 15:04"), method, table, formatRs(amount), fiscal, itemsTable)
+</div>`, ref, when.Format("02 Jan 2006, 15:04"), method, table, FormatRs(amount), fiscal, itemsTable)
 }
 
 // Line is a minimal invoice line item so this package does not import models.
@@ -233,7 +236,7 @@ func buildMessage(from, to, subject, text, html string) []byte {
 	return []byte(b.String())
 }
 
-func formatRs(v float64) string {
+func FormatRs(v float64) string {
 	return fmt.Sprintf("Rs %.0f", v)
 }
 
@@ -241,12 +244,12 @@ func invoiceText(ref, party string, amount float64, due time.Time, lines []Line)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Hello,\n\nHere is your invoice %s from Mesa OS.\n\n", ref)
 	fmt.Fprintf(&b, "Billed to: %s\n", party)
-	fmt.Fprintf(&b, "Amount due: %s\n", formatRs(amount))
+	fmt.Fprintf(&b, "Amount due: %s\n", FormatRs(amount))
 	fmt.Fprintf(&b, "Due date: %s\n", due.Format("02 Jan 2006"))
 	if len(lines) > 0 {
 		b.WriteString("\nItems:\n")
 		for _, l := range lines {
-			fmt.Fprintf(&b, "  - %s x%d = %s\n", l.Description, l.Qty, formatRs(l.UnitPrice*float64(l.Qty)))
+			fmt.Fprintf(&b, "  - %s x%d = %s\n", l.Description, l.Qty, FormatRs(l.UnitPrice*float64(l.Qty)))
 		}
 	}
 	b.WriteString("\nThank you for your business.\n")
@@ -258,7 +261,7 @@ func invoiceHTML(ref, party string, amount float64, due time.Time, lines []Line)
 	for _, l := range lines {
 		fmt.Fprintf(&rows,
 			"<tr><td style=\"padding:6px 12px;border-bottom:1px solid #eee\">%s</td><td style=\"padding:6px 12px;border-bottom:1px solid #eee;text-align:center\">%d</td><td style=\"padding:6px 12px;border-bottom:1px solid #eee;text-align:right\">%s</td></tr>",
-			l.Description, l.Qty, formatRs(l.UnitPrice*float64(l.Qty)))
+			l.Description, l.Qty, FormatRs(l.UnitPrice*float64(l.Qty)))
 	}
 	itemsTable := ""
 	if rows.Len() > 0 {
@@ -276,5 +279,5 @@ func invoiceHTML(ref, party string, amount float64, due time.Time, lines []Line)
   Due date: %s</p>
   %s
   <p style="color:#666;font-size:13px">Thank you for your business.</p>
-</div>`, ref, party, formatRs(amount), due.Format("02 Jan 2006"), itemsTable)
+</div>`, ref, party, FormatRs(amount), due.Format("02 Jan 2006"), itemsTable)
 }

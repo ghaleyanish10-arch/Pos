@@ -113,6 +113,11 @@ func (r *PurchaseOrderRepo) Create(ctx context.Context, po *model.PurchaseOrder,
 // PO line ordered — a client error, not a server fault.
 var ErrExceedsOrderedQty = fmt.Errorf("received quantity exceeds ordered quantity")
 
+// ErrAlreadyReceived is returned when a purchase order that has already been
+// received (fully or partially) is received again. Re-receiving would add
+// stock a second time for the same goods, so it is refused outright.
+var ErrAlreadyReceived = fmt.Errorf("purchase order has already been received")
+
 // Receive confirms goods arriving on a purchase order: for every received line
 // it adds the quantity to the matching tracked inventory item (matched by
 // case-insensitive name) and moves the PO to Received or Partially Received.
@@ -128,11 +133,17 @@ func (r *PurchaseOrderRepo) Receive(ctx context.Context, id string, received map
 	defer tx.Rollback(ctx)
 
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM purchase_orders WHERE id = $1)`, id).Scan(&exists); err != nil {
+	var currentStatus string
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM purchase_orders WHERE id = $1), COALESCE((SELECT status FROM purchase_orders WHERE id = $1), '')`, id).
+		Scan(&exists, &currentStatus); err != nil {
 		return nil, 0, err
 	}
 	if !exists {
 		return nil, 0, pgx.ErrNoRows
+	}
+	if currentStatus == "Received" || currentStatus == "Partially Received" {
+		return nil, 0, ErrAlreadyReceived
 	}
 
 	lines, err := r.GetItems(ctx, id)

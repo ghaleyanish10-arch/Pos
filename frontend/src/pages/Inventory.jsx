@@ -720,7 +720,7 @@ export function Inventory() {
                 const next = Math.max(0, Math.round((active.stock + delta) * 10) / 10);
                 setStock((p) => p.map((i) =>
                   i.name === active.name
-                    ? { ...i, stock: next, restocked: 'Just now' }
+                    ? { ...i, stock: next, ...(delta > 0 ? { restocked: 'Just now' } : {}) }
                     : i
                 ));
                 toast(`${active.name} adjusted to ${next.toFixed(1)} ${active.unit}`, { tone: 'green' });
@@ -729,7 +729,7 @@ export function Inventory() {
                     .catch(async () => {
                       try {
                         const res = await api('/inventory');
-                        if (res?.data?.length) setStock(res.data.map((i) => toDisplayItem(i, staticById)));
+                        if (res?.data?.length) setStock(res.data.map((i) => toDisplayItem(i, new Map(staticInventory.map((x) => [x.name, x])))));
                       } catch { /* keep last-known stock */ }
                       toast(`Adjust failed — stock left unchanged`, { tone: 'red' });
                     });

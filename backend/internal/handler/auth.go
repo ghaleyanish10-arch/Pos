@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mesa-os/backend/internal/auth"
@@ -52,13 +51,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	userID, email, role, branchID, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
+	userID, email, role, branchID, tokenVersion, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
 
-	tokens, err := auth.GenerateTokenPair(userID, email, role, branchID, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokens, err := auth.GenerateTokenPair(userID, email, role, branchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate tokens"})
 		return
@@ -97,6 +96,7 @@ func (h *AuthHandler) sendVerificationCode(c *gin.Context, userID, emailAddr, na
 	if h.smtp != nil && h.smtp.Configured() {
 		err := h.smtp.SendVerificationCode(emailAddr, name, code)
 		if err == nil {
+			ginLog("verification code sent to " + emailAddr + " via smtp")
 			return true
 		}
 		ginLog("smtp verification code send failed: " + err.Error())
@@ -106,10 +106,13 @@ func (h *AuthHandler) sendVerificationCode(c *gin.Context, userID, emailAddr, na
 	if h.email != nil && h.email.Enabled() {
 		ctx, cancel := contextWithTimeout()
 		defer cancel()
-		if _, serr := h.email.SendVerificationCode(ctx, emailAddr, name, code); serr == nil {
+		if id, serr := h.email.SendVerificationCode(ctx, emailAddr, name, code); serr == nil {
+			// The Resend message id is the receipt: it proves api.resend.com
+			// accepted the email, not just that we attempted a request.
+			ginLog("verification code sent to " + emailAddr + " (resend id: " + id + ")")
 			return true
 		} else {
-			ginLog("failed to send verification code: " + serr.Error())
+			ginLog("failed to send verification code to " + emailAddr + ": " + serr.Error())
 		}
 	}
 	return false
@@ -147,18 +150,23 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		_ = h.svc.SetBranch(c.Request.Context(), userID, branchID)
 	}
 
-	// OTP email verification: the account is created UNVERIFIED (the Register
-	// path stamps verified only for legacy callers), a 6-digit code is emailed
-	// via Gmail SMTP, and the dashboard opens after the code is entered.
-	if verr := h.svc.MarkEmailUnverified(c.Request.Context(), userID); verr != nil {
-		ginLog("failed to clear verified flag on signup: " + verr.Error())
-	}
+	// OTP email verification: the account is created verified (Register stamps
+	// email_verified_at now). It is moved to the UNVERIFIED state only when a
+	// 6-digit code was actually delivered via Gmail SMTP or the Resend service.
+	// Without a working transport no owner could ever complete the step, so
+	// leaving the flag set would permanently lock the account out of the
+	// verified-gated reports/payroll routes.
 	sent := h.sendVerificationCode(c, userID, req.Email, req.Name)
+	if sent {
+		if verr := h.svc.MarkEmailUnverified(c.Request.Context(), userID); verr != nil {
+			ginLog("failed to clear verified flag on signup: " + verr.Error())
+		}
+	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":                 "account created — check your inbox for the 6-digit code",
 		"email":                   req.Email,
-		"needs_verification":      true,
+		"needs_verification":      sent,
 		"email_verification_sent": sent,
 	})
 }
@@ -269,7 +277,11 @@ func (h *AuthHandler) VerifyCode(c *gin.Context) {
 	if user.BranchID != nil {
 		branchID = *user.BranchID
 	}
-	tokens, terr := auth.GenerateTokenPair(user.ID, user.Email, user.Role, branchID, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokenVersion, verr := h.svc.CurrentTokenVersion(c.Request.Context(), user.ID)
+	if verr != nil {
+		tokenVersion = 0
+	}
+	tokens, terr := auth.GenerateTokenPair(user.ID, user.Email, user.Role, branchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if terr != nil {
 		// Verification still stands — the client falls back to the login page.
 		c.JSON(http.StatusOK, gin.H{"message": "email verified — welcome to Mesa OS"})
@@ -528,18 +540,29 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
+	// The token must be a genuine typ=refresh token (never a session token)
+	// AND belong to a still-existing, non-deleted account. ValidateRefreshToken
+	// enforces both before any new pair is minted.
+	if err := h.svc.ValidateRefreshToken(c.Request.Context(), req.RefreshToken, h.config.JWTSecret); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
+		return
+	}
+
 	claims, err := auth.ValidateToken(req.RefreshToken, h.config.JWTSecret)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
 		return
 	}
 
-	tokens, err := auth.GenerateTokenPair(claims.UserID, claims.Email, claims.Role, claims.BranchID, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokenVersion, verr := h.svc.CurrentTokenVersion(c.Request.Context(), claims.UserID)
+	if verr != nil {
+		tokenVersion = 0
+	}
+	tokens, err := auth.GenerateTokenPair(claims.UserID, claims.Email, claims.Role, claims.BranchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate tokens"})
 		return
 	}
 
-	_ = time.Now() // keep time import used
 	c.JSON(http.StatusOK, gin.H{"tokens": tokens})
 }

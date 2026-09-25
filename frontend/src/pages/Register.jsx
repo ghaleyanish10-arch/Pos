@@ -34,6 +34,7 @@ import { printSplitReceipts, printReceiptHtml } from '../utils/printReceipt';
 import { useCampaigns, campaignPhase, phaseWindow } from '../state/CampaignContext';
 import { PaymentFlow } from '../components/pay/PaymentFlow';
 import { useSound } from '../state/SoundContext';
+import { TABLE_STATE_META, TABLE_STATE_ORDER } from '../data/tableStates';
 
 const catDot = {
   'All items': 'bg-meta',
@@ -42,13 +43,6 @@ const catDot = {
   Grill: 'bg-status-amber',
   Bar: 'bg-status-purple',
   Dessert: 'bg-status-red'
-};
-
-const tableStateDot = {
-  Open: 'bg-status-green',
-  Seated: 'bg-status-blue',
-  'Check dropped': 'bg-status-amber',
-  'Needs attention': 'bg-status-red'
 };
 
 const MODIFIER_PRESETS = {
@@ -69,11 +63,16 @@ const fmt = (n) => 'Rs ' + n.toLocaleString('en-IN');
 const orderTypeIcon = { 'dine-in': UtensilsIcon, takeaway: ShoppingBagIcon, delivery: TruckIcon };
 
 const CART_KEY = 'mesa_register_cart';
+const CART_TABLE_KEY = 'mesa_register_cart_table';
 
-function readCart() {
+function readCart(tableParam) {
   try {
     const raw = localStorage.getItem(CART_KEY);
     if (!raw) return [];
+    const cartTable = localStorage.getItem(CART_TABLE_KEY) || '';
+    // A cart fingerprinted for a different table — or an untagged legacy
+    // cart — must not leak into a fresh scanned-table session (Bug C).
+    if (tableParam && cartTable !== tableParam) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -139,13 +138,13 @@ export function Register() {
   const toast = useToast();
   const { play } = useSound();
   const { addOrder } = useOrders();
-  const { tables, occupyTable, freeTable, setTableOrder, labelOf } = useTables();
+  const { tables, occupyTable, freeTable, markOrdered, setTableOrder, labelOf } = useTables();
   const { settings } = useSettings();
   const { items: menuItems, categories: categoriesList } = useMenu();
 
   const [category, setCategory] = useState('All items');
   const [search, setSearch] = useState('');
-  const [cart, setCart] = useState(readCart);
+  const [cart, setCart] = useState(() => readCart(tableParam));
   const [recent, setRecent] = useState(readRecent);
   const [orderNotes, setOrderNotes] = useState(readNotes);
   const [orderType, setOrderType] = useState(readOrderType);
@@ -197,6 +196,14 @@ export function Register() {
     if (cart.length === 0) setOrderRef('');
   }, [cart, orderRef]);
 
+  // Fingerprint the persisted cart with the table it belongs to, so a later
+  // scan of a different table never restores another table's items (Bug C).
+  useEffect(() => {
+    try {
+      localStorage.setItem(CART_TABLE_KEY, orderTable || '');
+    } catch { /* ignore */ }
+  }, [orderTable]);
+
   useEffect(() => {
     try {
       localStorage.setItem('mesa_register_notes', orderNotes);
@@ -214,6 +221,23 @@ export function Register() {
       localStorage.setItem('mesa_register_table', orderTable);
     } catch { /* ignore */ }
   }, [orderTable]);
+
+  // A scanned/selected table param in the URL always wins over any stale
+  // localStorage value and stays in sync when the param changes while the
+  // register is already mounted ("Add items" navigation from the floor plan).
+  // A cart fingerprinted for the previous table is dropped rather than
+  // carried into the new table's order (Bug C).
+  useEffect(() => {
+    if (!tableParam) return;
+    setOrderTable(tableParam);
+    let cartTable = '';
+    try {
+      cartTable = localStorage.getItem(CART_TABLE_KEY) || '';
+    } catch { /* ignore */ }
+    if (cartTable !== tableParam) {
+      setCart((prev) => (prev.length ? [] : prev));
+    }
+  }, [tableParam]);
 
   useEffect(() => {
     try {
@@ -447,11 +471,11 @@ export function Register() {
       vat,
       total,
       type: orderType,
-      table: orderTable || tableParam || '',
+      table: orderTable,
       customer
     };
     const paid = segments.map((s) => fmt(s.amount)).join(' + ');
-    const paidTable = orderTable || tableParam || '';
+    const paidTable = orderTable;
     // No optimistic table writes here — the backend is the source of truth
     // and TableContext refreshes once the order actually exists.
     const splitId =
@@ -479,7 +503,7 @@ export function Register() {
         method: 'POST',
         body: {
           type: orderType,
-          table_id: orderTable || tableParam || '',
+          table_id: orderTable,
           guest_id: customerId || '',
           items: payloadItems
         }
@@ -516,7 +540,11 @@ export function Register() {
         }, settings);
       }
       clearCart();
-      if (paidTable) freeTable(paidTable);
+      // The charged order stays OPEN on the server, so the party remains
+      // seated (Seated is derived from an open order). Refresh the floor now;
+      // it shows T?? as Seated with the order right away. Freeing only
+      // happens via "Close table" on the floor plan.
+      if (paidTable) markOrdered(paidTable);
       play('paymentSuccess');
       window.dispatchEvent(new CustomEvent('mesa-order-update'));
       toast.success(
@@ -533,7 +561,7 @@ export function Register() {
           notes: orderNotes,
           allergy: orderNotes,
           type: orderType,
-          table: orderTable || tableParam || '—'
+          table: orderTable || '—'
         });
         setOrderNotes('');
         clearCart();
@@ -867,7 +895,7 @@ export function Register() {
                   <UtensilsIcon className="h-4 w-4 shrink-0" />
                   <span className="truncate">{selectedTable ? labelOf(orderTable) : 'Table'}</span>
                   {selectedTable && (
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${tableStateDot[selectedTable.state] || 'bg-meta'}`} aria-hidden="true" />
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${TABLE_STATE_META[selectedTable.state]?.dot || 'bg-meta'}`} aria-hidden="true" />
                   )}
                 </span>
                 <ChevronRightIcon className="h-4 w-4 shrink-0" />
@@ -1047,7 +1075,7 @@ export function Register() {
         vat={vat}
         itemCount={cart.length}
         type={orderTypeLabel}
-        table={orderTable ? labelOf(orderTable) : tableParam}
+        table={orderTable ? labelOf(orderTable) : ''}
         customer={customer}
         items={cart.map((l, i) => ({ id: `${l.name}-${i}`, name: l.name, qty: l.qty, price: l.price }))}
         splitBusy={splitBusy}
@@ -1071,12 +1099,16 @@ export function Register() {
           </Button>
         }>
         <div className="scroll-thin max-h-[60vh] overflow-y-auto">
-          {['Open', 'Seated', 'Check dropped'].map((stateFilter) => {
-            const rows = tables.filter((t) => t.state === stateFilter || (stateFilter === 'Seated' && t.state === 'Needs attention'));
+          {TABLE_STATE_ORDER.map((stateFilter) => {
+            const meta = TABLE_STATE_META[stateFilter];
+            // 'Reserved' tables have no tile on the floor plan (they render
+            // as Vacant there), so seat them under Vacant here too — one set
+            // of categories everywhere.
+            const rows = tables.filter((t) => t.state === stateFilter || (stateFilter === 'Open' && t.state === 'Reserved'));
             if (rows.length === 0) return null;
             return (
               <div key={stateFilter} className="mb-3">
-                <p className="mb-1.5 text-caption font-semibold text-meta">{stateFilter}</p>
+                <p className="mb-1.5 text-caption font-semibold text-meta">{meta.label}</p>
                 <div className="flex flex-wrap gap-2">
                   {rows.map((t) => {
                     const active = orderTable === t.name;
@@ -1091,7 +1123,7 @@ export function Register() {
                             ? 'border-ink bg-ink text-white'
                             : 'border-line bg-canvas text-ink hover:border-ink/30'
                         }`}>
-                        <span className={`h-2 w-2 rounded-full ${tableStateDot[t.state] || 'bg-meta'}`} aria-hidden="true" />
+                        <span className={`h-2 w-2 rounded-full ${TABLE_STATE_META[t.state]?.dot || 'bg-meta'}`} aria-hidden="true" />
                         {labelOf(t.name)}
                         <span className={`font-mono text-caption ${active ? 'text-white/60' : 'text-meta'}`}>{t.seats}p</span>
                       </button>

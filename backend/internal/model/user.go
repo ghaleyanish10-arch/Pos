@@ -84,8 +84,8 @@ type Permission struct {
 }
 
 type PermissionRow struct {
-	Action string         `json:"action"`
-	Group  string         `json:"group"`
+	Action string          `json:"action"`
+	Group  string          `json:"group"`
 	Grants map[string]bool `json:"grants"`
 }
 
@@ -102,10 +102,12 @@ type ElevateRequest struct {
 
 // SetPINRequest is the body of PUT /staff/:id/pin. password is the CALLER's
 // own login password used to re-authenticate - the session alone is not
-// enough, and the target's password is never involved.
+// enough, and the target's password is never involved. It may be empty only
+// when the caller still sits inside a fresh, server-verified re-auth window;
+// the handler re-requires it otherwise.
 type SetPINRequest struct {
 	PIN      string `json:"pin" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Password string `json:"password" binding:"omitempty"`
 }
 
 // --- PIN clock-in (shared-terminal staff identity) ---
@@ -151,10 +153,15 @@ type RosterMember struct {
 
 // EnableTerminalRequest is the body of POST /staff/terminal-enable: a manager
 // or boss approves this specific device for clock-in by presenting their PIN.
-// branch_id is optional — when empty the approval applies to every branch the
-// device later claims (the shared-terminal default today).
+// Exactly one identity field is required — user_id (picked off the roster) or
+// email (typed on a terminal whose approvers list is empty because no branch
+// is bound yet). branch_id is the branch the terminal DECLARES it serves (its
+// intended tenant); it is required, and the device is only bound when the
+// authenticating approver's own branch equals the declared one — a
+// cross-branch email can never bind a device to a branch it has no right to.
 type EnableTerminalRequest struct {
-	UserID   string `json:"user_id" binding:"required"`
+	UserID   string `json:"user_id"`
+	Email    string `json:"email"`
 	PIN      string `json:"pin" binding:"required"`
 	BranchID string `json:"branch_id"`
 }

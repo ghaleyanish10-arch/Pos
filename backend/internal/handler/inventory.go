@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -93,6 +94,10 @@ func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 	}
 
 	if err := h.repo.AdjustStock(c.Request.Context(), c.Param("id"), req.Delta); err != nil {
+		if errors.Is(err, repo.ErrInsufficientStock) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -141,6 +146,10 @@ func (h *InventoryHandler) RecordWaste(c *gin.Context) {
 		CreatedBy: actorString(actor),
 	}
 	if err := h.repo.RecordWaste(ctx, w, 0); err != nil {
+		if errors.Is(err, repo.ErrInsufficientStock) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

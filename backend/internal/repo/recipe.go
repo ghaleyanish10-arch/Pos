@@ -15,14 +15,26 @@ func NewRecipeRepo(db *pgxpool.Pool) *RecipeRepo {
 	return &RecipeRepo{db: db}
 }
 
+// recipeCols is the shared SELECT list for the recipe surface plus the
+// listing conveniences (linked menu item's name/price and the computed plate
+// cost) so the list view never has to fetch ingredients again.
+const recipeCols = `
+	SELECT r.id, r.name, r.menu_item_id::text, r.target_cost, r.branch_id::text, r.created_at,
+	       COALESCE(mi.name, ''),
+	       COALESCE(mi.price, 0)::float8,
+	       COALESCE((SELECT SUM(rl.unit_cost) FROM recipe_lines rl WHERE rl.recipe_id = r.id), 0)::float8
+	FROM recipes r
+	LEFT JOIN menu_items mi ON mi.id = r.menu_item_id AND mi.deleted_at IS NULL
+	WHERE r.deleted_at IS NULL`
+
 func (r *RecipeRepo) List(ctx context.Context, branchID string) ([]model.Recipe, error) {
-	query := `SELECT id, name, menu_item_id::text, target_cost, branch_id::text, created_at FROM recipes WHERE 1=1`
+	query := recipeCols
 	args := []interface{}{}
 	if branchID != "" {
-		query += ` AND branch_id = $1`
+		query += ` AND r.branch_id = $1`
 		args = append(args, branchID)
 	}
-	query += ` ORDER BY name`
+	query += ` ORDER BY r.name`
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -32,27 +44,43 @@ func (r *RecipeRepo) List(ctx context.Context, branchID string) ([]model.Recipe,
 
 	var recipes []model.Recipe
 	for rows.Next() {
-		var rec model.Recipe
-		if err := rows.Scan(&rec.ID, &rec.Name, &rec.MenuItemID, &rec.TargetCost, &rec.BranchID, &rec.CreatedAt); err != nil {
+		rec, err := scanRecipe(rows)
+		if err != nil {
 			return nil, err
 		}
 		lines, _ := r.GetLines(ctx, rec.ID)
 		rec.Lines = lines
-		recipes = append(recipes, rec)
+		recipes = append(recipes, *rec)
 	}
 	return recipes, nil
 }
 
 func (r *RecipeRepo) GetByID(ctx context.Context, id string) (*model.Recipe, error) {
-	var rec model.Recipe
-	err := r.db.QueryRow(ctx,
-		`SELECT id, name, menu_item_id::text, target_cost, branch_id::text, created_at FROM recipes WHERE id = $1`, id,
-	).Scan(&rec.ID, &rec.Name, &rec.MenuItemID, &rec.TargetCost, &rec.BranchID, &rec.CreatedAt)
+	rec, err := scanRecipe(r.db.QueryRow(ctx, recipeCols+` AND r.id = $1`, id))
 	if err != nil {
 		return nil, err
 	}
-	lines, _ := r.GetLines(ctx, id)
+	lines, _ := r.GetLines(ctx, rec.ID)
 	rec.Lines = lines
+	return rec, nil
+}
+
+// scanRecipe scans one row of recipeCols (either rows.Rows or pgx.Row).
+func scanRecipe(r interface{ Scan(...interface{}) error }) (*model.Recipe, error) {
+	var rec model.Recipe
+	var menuName string
+	var menuPrice, plateCost float64
+	if err := r.Scan(
+		&rec.ID, &rec.Name, &rec.MenuItemID, &rec.TargetCost, &rec.BranchID, &rec.CreatedAt,
+		&menuName, &menuPrice, &plateCost,
+	); err != nil {
+		return nil, err
+	}
+	if menuName != "" {
+		rec.MenuItemName = &menuName
+		rec.MenuPrice = &menuPrice
+	}
+	rec.PlateCost = &plateCost
 	return &rec, nil
 }
 
@@ -137,4 +165,12 @@ func (r *RecipeRepo) Update(ctx context.Context, id string, rec *model.UpdateRec
 	}
 
 	return tx.Commit(ctx)
+}
+
+// Delete soft-deletes a recipe so the list stays clean but history can be
+// recovered. Idempotent: deleting an already-deleted or unknown recipe is
+// a no-op.
+func (r *RecipeRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `UPDATE recipes SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
+	return err
 }

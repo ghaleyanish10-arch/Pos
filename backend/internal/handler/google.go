@@ -2,6 +2,9 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,18 +27,29 @@ const (
 
 // GoogleRedirect points the browser at Google's consent screen. The OAuth
 // secret never leaves the server: the exchange happens entirely in the
-// callback below.
+// callback below. A random `state` value rides along in a short-lived
+// HttpOnly cookie so the callback can prove the login started from this
+// browser (CSRF / login-confusion protection).
 func (h *AuthHandler) GoogleRedirect(c *gin.Context) {
 	if h.config.GoogleClientID == "" || h.config.GoogleClientSecret == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Google sign-in is not configured on the server (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)"})
 		return
 	}
 
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to initialise sign-in"})
+		return
+	}
+	state := hex.EncodeToString(stateBytes)
+	c.SetCookie("oauth_state", state, 600, "/", "", false, true)
+
 	authURL := fmt.Sprintf(
-		"%s?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&prompt=select_account",
+		"%s?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&state=%s&prompt=select_account",
 		googleAuthURL,
 		url.QueryEscape(h.config.GoogleClientID),
 		url.QueryEscape(h.config.GoogleRedirectURL),
+		state,
 	)
 	c.Redirect(http.StatusTemporaryRedirect, authURL)
 }
@@ -45,8 +59,22 @@ func (h *AuthHandler) GoogleRedirect(c *gin.Context) {
 // business owner), mints a JWT pair and bounces back to the frontend with the
 // token. Codes are single-use by design: Google rotates each authorization code.
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	// The signed-out cookie drops off after the first bounce; redeem or
+	// discard it up front so a replay cannot reuse it.
+	cookieState, _ := c.Cookie("oauth_state")
+	c.SetCookie("oauth_state", "", -1, "/", "", false, true)
+
 	if h.config.GoogleClientID == "" || h.config.GoogleClientSecret == "" {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Google sign-in is not configured on the server (set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)"})
+		return
+	}
+
+	// The state we issued in GoogleRedirect must come back untouched; without
+	// it a forged callback could bind a stranger's Google account to this user.
+	// Google bails with `error=access_denied` on decline, so `state` is absent
+	// there too — both cases are a clean refusal, never an account action.
+	if cookieState == "" || !constantTimeEqual(cookieState, c.Query("state")) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sign-in state — please try again"})
 		return
 	}
 
@@ -127,7 +155,11 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	if user.BranchID != nil {
 		branchID = *user.BranchID
 	}
-	tokens, err := auth.GenerateTokenPair(userID, user.Email, user.Role, branchID, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokenVersion, verr := h.svc.CurrentTokenVersion(ctx, userID)
+	if verr != nil {
+		tokenVersion = 0
+	}
+	tokens, err := auth.GenerateTokenPair(userID, user.Email, user.Role, branchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate tokens"})
 		return
@@ -220,4 +252,13 @@ func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, redirectURL
 		return nil, fmt.Errorf("decode profile: %w", err)
 	}
 	return &info, nil
+}
+
+// constantTimeEqual compares two non-empty strings without leaking how far
+// they diverge.
+func constantTimeEqual(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

@@ -68,14 +68,32 @@ func (r *DeviceRepo) GetEnabledBy(ctx context.Context, deviceID string) (string,
 	return by, at, err
 }
 
+// BranchOf returns the branch an approved device is bound to, resolved
+// server-side from the `devices` row (bound at approval time to the
+// approver's branch — never from client input). Contracts: pgx.ErrNoRows when
+// the device has no approval row; "" when the row exists but carries no
+// branch (approved under the old pre-binding behavior or by a floating
+// account — callers turn that into setup state, not a roster).
+func (r *DeviceRepo) BranchOf(ctx context.Context, deviceID string) (string, error) {
+	var branch string
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(branch_id::text, '') FROM devices WHERE id = $1`,
+		deviceID,
+	).Scan(&branch)
+	return branch, err
+}
+
 // List returns the approved terminals for a branch (empty branch = all),
 // newest first, with the approver's name joined in for the management screen.
+// Soft-deleted approver accounts are excluded from the join so a purged
+// manager's name never surfaces; the device row itself still lists (enabled
+// hardware does not disappear because its approver was deleted).
 func (r *DeviceRepo) List(ctx context.Context, branchID string) ([]model.Device, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT d.id, COALESCE(d.branch_id::text, ''), d.enabled_at,
 		        COALESCE(d.enabled_by_user_id::text, ''), COALESCE(u.name, '')
 		 FROM devices d
-		 LEFT JOIN users u ON u.id = d.enabled_by_user_id
+		 LEFT JOIN users u ON u.id = d.enabled_by_user_id AND u.deleted_at IS NULL
 		 WHERE $1 = '' OR d.branch_id = $1::uuid OR d.branch_id IS NULL
 		 ORDER BY d.enabled_at DESC`,
 		branchID,

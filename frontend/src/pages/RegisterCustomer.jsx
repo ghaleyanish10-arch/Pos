@@ -42,6 +42,7 @@ export function RegisterCustomer() {
   const campaign = isPreview ? realCampaign || DEMO_CAMPAIGN : realCampaign;
   const toast = useToast();
   const seatedRef = useRef(false);
+  const orderInFlight = useRef(false);
 
   // Opening the menu from the table QR = the party has arrived at that table.
   useEffect(() => {
@@ -53,7 +54,12 @@ export function RegisterCustomer() {
   }, [table, occupyTable, toast]);
 
   const handleOrderPlaced = async (lines, _subtotal, meta = {}) => {
+    // In-flight lock: a double-tap on the cart CTA must not POST the same cart
+    // twice — that would create two orders and two kitchen tickets for one tap.
+    if (orderInFlight.current) return;
+    orderInFlight.current = true;
     const tableLabel = meta.table || table || '';
+    try {
     // Persist to the backend so the order shows up in staff Orders/KDS as an
     // incoming ticket (customers have no session, hence the public endpoint).
     let sent = false;
@@ -131,6 +137,9 @@ export function RegisterCustomer() {
           : `Store server unreachable — order kept on this device`,
         { tone: 'amber' }
       );
+    }
+    } finally {
+      orderInFlight.current = false;
     }
   };
 

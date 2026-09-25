@@ -35,10 +35,16 @@ func pinFailureCount(t *testing.T, pool *pgxpool.Pool, userID string) int {
 	return n
 }
 
-// terminalStatus hits GET /staff/terminal-status for a device.
-func terminalStatus(t *testing.T, r *gin.Engine, deviceID string) (bool, []string) {
+// terminalStatus hits GET /staff/terminal-status for a device, optionally
+// declaring a branch (branchID "" = none — the pre-enable cross-tenant-safe
+// default that must yield no approvers).
+func terminalStatus(t *testing.T, r *gin.Engine, deviceID, branchID string) (bool, []string) {
 	t.Helper()
-	w := doDeviceReq(r, http.MethodGet, "/api/v1/staff/terminal-status", deviceID, nil)
+	path := "/api/v1/staff/terminal-status"
+	if branchID != "" {
+		path += "?branch_id=" + branchID
+	}
+	w := doDeviceReq(r, http.MethodGet, path, deviceID, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("terminal-status returned %d: %s", w.Code, w.Body.String())
 	}
@@ -64,7 +70,7 @@ func TestTerminalEnableManagerApprovesAndUnlocksRoster(t *testing.T) {
 	termID := "term-approve-1"
 
 	// Not yet approved: status says so, roster is gated away.
-	enabled, _ := terminalStatus(t, r, termID)
+	enabled, _ := terminalStatus(t, r, termID, "")
 	if enabled {
 		t.Fatal("terminal-status reported enabled before any approval")
 	}
@@ -75,7 +81,7 @@ func TestTerminalEnableManagerApprovesAndUnlocksRoster(t *testing.T) {
 
 	// A manager approves the terminal with their PIN.
 	w = doDeviceReq(r, http.MethodPost, "/api/v1/staff/terminal-enable", termID, map[string]string{
-		"user_id": mgrID, "pin": "7417",
+		"user_id": mgrID, "pin": "7417", "branch_id": bossBranchSeed,
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("terminal-enable returned %d: %s", w.Code, w.Body.String())
@@ -97,7 +103,7 @@ func TestTerminalEnableManagerApprovesAndUnlocksRoster(t *testing.T) {
 	}
 
 	// A fresh status check (e.g. a page reload) skips the setup screen.
-	enabled, _ = terminalStatus(t, r, termID)
+	enabled, _ = terminalStatus(t, r, termID, "")
 	if !enabled {
 		t.Fatal("terminal-status still reported disabled after approval")
 	}
@@ -111,9 +117,10 @@ func TestTerminalStatusListsOnlyManagersAndBossesAsApprovers(t *testing.T) {
 	mgrID, _ := newManager(t, r, "Approver Ana", "approver@test.dev")
 	_ = mgrID
 
-	// The boss (Corporate Admin) already exists in the seed, so the approvers
-	// list must contain the manager and the boss but never the cashier/auditor.
-	_, names := terminalStatus(t, r, "term-approvers-1")
+	// The boss (Corporate Admin) already exists in the seed, so a declared
+	// branch of approvers must contain the manager and the boss but never the
+	// cashier/auditor.
+	_, names := terminalStatus(t, r, "term-approvers-1", bossBranchSeed)
 	for _, n := range names {
 		if n == "Cashier Mina" || n == "Stock Kiran" {
 			t.Fatalf("approvers leaked non-manager %q: %v", n, names)
@@ -129,6 +136,17 @@ func TestTerminalStatusListsOnlyManagersAndBossesAsApprovers(t *testing.T) {
 		if !ok {
 			t.Fatalf("approvers missing %s: %v", name, names)
 		}
+	}
+
+	// WITHOUT any declared branch the approvers list must be EMPTY — a
+	// brand-new terminal must never be handed a cross-tenant list to approve
+	// from. This is the public-endpoint leak the scoping landed to close.
+	enabled, noBranch := terminalStatus(t, r, "term-approvers-1", "")
+	if enabled {
+		t.Fatal("terminal-status reported enabled without any approval")
+	}
+	if len(noBranch) != 0 {
+		t.Fatalf("pre-enable terminal without a branch leaked %d approvers: %v", len(noBranch), noBranch)
 	}
 }
 
@@ -239,7 +257,7 @@ func TestTerminalDisableBossOnlyReturnsToSetup(t *testing.T) {
 	}
 
 	// The terminal is back on the setup screen on its next load.
-	enabled, _ := terminalStatus(t, r, termID)
+	enabled, _ := terminalStatus(t, r, termID, "")
 	if enabled {
 		t.Fatal("terminal-status reported enabled after disabling")
 	}

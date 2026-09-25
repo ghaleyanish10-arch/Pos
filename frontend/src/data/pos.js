@@ -1,5 +1,8 @@
 export const floorRooms = ['Hall', 'Balcony', 'Mezzanine', 'Courtyard'];
 
+// ILLUSTRATIVE ONLY — offline fallback for when the backend is unreachable.
+// Once GET /tables responds, the server's derived state (and its live
+// bill_dropped / needs_attention flags) fully replaces this list.
 export const floorTables = [
 { name: 'T1', seats: 2, state: 'Open', detail: 'Free', room: 'Hall' },
 { name: 'T2', seats: 2, state: 'Seated', detail: '2 covers · 18 min', room: 'Balcony' },

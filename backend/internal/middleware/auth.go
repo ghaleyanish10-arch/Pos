@@ -31,6 +31,15 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
+		// Refresh tokens must NEVER authenticate a session. They carry typ=
+		// refresh and are only redeemable at /auth/refresh; using one as a
+		// Bearer token here would otherwise mint an endless 7-day chain.
+		if claims.TokenType == auth.TokenTypeRefresh {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+			c.Abort()
+			return
+		}
+
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
 		c.Set("role", claims.Role)

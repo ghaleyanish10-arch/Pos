@@ -196,24 +196,34 @@ export function TableProvider({ children }) {
   // demo tables fill in when there's no backend yet; local overrides dress
   // the result (label, seats, room).
   const tables = useMemo(() => {
-    const source = serverOk && serverTables.length > 0
-      ? serverTables.map((t) => ({
-          id: t.id,
-          name: t.name,
-          seats: t.seats,
-          state: t.state || 'Open',
-          detail: t.detail || '',
-          orderId: t.order_id || null,
-          orderTotal: t.order_total || 0,
-          itemCount: t.item_count || 0,
-          room: staticFloorTables.find((s) => s.name === t.name)?.room || 'Hall'
-        }))
-      : staticFloorTables.map((t) => ({
-          ...t,
-          orderId: null,
-          orderTotal: 0,
-          itemCount: 0
-        }));
+const source = serverOk && serverTables.length > 0
+        ? serverTables.map((t) => ({
+            id: t.id,
+            name: t.name,
+            seats: t.seats,
+            state: t.state || 'Open',
+            detail: t.detail || '',
+            orderId: t.order_id || null,
+            orderTotal: t.order_total || 0,
+            itemCount: t.item_count || 0,
+            billDropped: !!t.bill_dropped,
+            needsAttention: !!t.needs_attention,
+            note: t.attention_note || '',
+            mergedWith: t.merged_with || [],
+            mergedSeats: t.merged_seats || 0,
+            room: staticFloorTables.find((s) => s.name === t.name)?.room || 'Hall'
+          }))
+        : staticFloorTables.map((t) => ({
+            ...t,
+            orderId: null,
+            orderTotal: 0,
+            itemCount: 0,
+            billDropped: false,
+            needsAttention: false,
+            note: '',
+            mergedWith: [],
+            mergedSeats: 0
+          }));
     return source.map((t) => {
       const now = Date.now();
       const isBrowsing = browsing[t.name] > now && t.state === 'Open';

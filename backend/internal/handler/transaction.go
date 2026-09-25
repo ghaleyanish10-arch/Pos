@@ -1,19 +1,23 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mesa-os/backend/internal/email"
 	"github.com/mesa-os/backend/internal/mailer"
 	"github.com/mesa-os/backend/internal/model"
 	"github.com/mesa-os/backend/internal/repo"
 )
 
 type TransactionHandler struct {
-	repo   *repo.TransactionRepo
-	orders *repo.OrderRepo
-	mailer *mailer.Mailer
+	repo     *repo.TransactionRepo
+	orders   *repo.OrderRepo
+	mailer   *mailer.Mailer
+	emailSvc *email.Service
 }
 
 // paymentMethods is the allowlist of tender types the POS accepts. The
@@ -38,6 +42,10 @@ func NewTransactionHandler(r *repo.TransactionRepo) *TransactionHandler {
 
 // SetMailer attaches optional SMTP delivery (nil mailer = email disabled).
 func (h *TransactionHandler) SetMailer(m *mailer.Mailer) { h.mailer = m }
+
+// SetEmail attaches the configured Resend service. The receipt endpoint
+// prefers it, falling back to SMTP, so the one body format is shared.
+func (h *TransactionHandler) SetEmail(s *email.Service) { h.emailSvc = s }
 
 // SetOrderRepo lets the receipt email include the order's line items.
 func (h *TransactionHandler) SetOrderRepo(o *repo.OrderRepo) { h.orders = o }
@@ -98,20 +106,43 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 		BranchID:  strPtr(branch),
 	}
 
-	if err := h.repo.Create(c.Request.Context(), tx); err != nil {
+	orderFullyPaid, err := h.repo.Create(c.Request.Context(), tx)
+	if err != nil {
+		if errors.Is(err, repo.ErrPaymentExceedsOrder) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Best-effort: this app settles a table's full open tab in one shot and
-	// has no partial-payment tracking, so any transaction carrying an
-	// order_id means that order is paid — close it so the floor plan
-	// derives the table back to 'Open'.
-	if req.OrderID != "" && h.orders != nil {
-		_ = h.orders.Update(c.Request.Context(), req.OrderID, "closed")
+	// Auto-vacate the table ONLY when this payment settled the last rupee of
+	// the order. Split bills post one transaction per guest against the same
+	// order_id — guest 1 of 3 paying in must NOT close the party out, so the
+	// close is gated on the fully-paid signal, not on "a payment arrived".
+	// Closing flips the order to 'closed', which is what the floor derives the
+	// table back to 'Open' from. If that close misfires the money is still
+	// recorded — we log it loudly and tell this POS in the response, instead
+	// of silently leaving a paid table 'Seated' until someone notices smoke.
+	orderClosed := false
+	warning := ""
+	if orderFullyPaid {
+		if h.orders == nil {
+			ginLog("order " + req.OrderID + " fully paid but order store is not wired — left seated")
+			warning = "payment recorded, but the order could not be closed on the server — please close the table manually"
+		} else if cerr := h.orders.Update(c.Request.Context(), req.OrderID, "closed"); cerr != nil {
+			ginLog("CRITICAL: payment recorded for order " + req.OrderID + " but closing the order FAILED: " + cerr.Error() + " — table may stay Seated")
+			warning = "payment recorded, but failed to auto-close this order — please close the table manually"
+		} else {
+			orderClosed = true
+		}
 	}
 
-	c.JSON(http.StatusCreated, tx)
+	resp := gin.H{"data": tx, "order_closed": orderClosed}
+	if warning != "" {
+		resp["warning"] = warning
+	}
+	c.JSON(http.StatusCreated, resp)
 }
 
 // TxEmailRequest is the body for the transaction receipt-email endpoint.
@@ -119,22 +150,16 @@ type TxEmailRequest struct {
 	To string `json:"to"`
 }
 
-// SendByEmail emails a payment receipt for a transaction via real SMTP.
-// With the API offline (mock data on the frontend) the frontend degrades to
-// a prefilled mailto: link, mirroring the invoice flow.
+// SendByEmail emails a payment receipt for a transaction. The Resend service
+// (email.Service) is preferred because it is the configured transport in
+// production; SMTP is the legacy fallback. With neither configured the API
+// answers 503 and the frontend says so honestly.
 func (h *TransactionHandler) SendByEmail(c *gin.Context) {
 	var req TxEmailRequest
 	_ = c.ShouldBindJSON(&req)
 	to := strings.TrimSpace(req.To)
 	if to == "" || !emailRe.MatchString(to) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "a valid recipient email is required"})
-		return
-	}
-
-	if h.mailer == nil || !h.mailer.Configured() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "email is not configured on the server (set SMTP_HOST and SMTP_FROM)",
-		})
 		return
 	}
 
@@ -157,12 +182,34 @@ func (h *TransactionHandler) SendByEmail(c *gin.Context) {
 	if ref == "" {
 		ref = "TXN-" + strings.ToUpper(tx.ID[:8])
 	}
-	if err := h.mailer.SendReceiptEmail(to, ref, tx.Method, tx.TableName, tx.Amount, tx.CreatedAt, lines, tx.FiscalID); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "could not send email: " + err.Error()})
+
+	if h.emailSvc != nil && h.emailSvc.Enabled() {
+		subject := fmt.Sprintf("Payment receipt %s — %s", ref, mailer.FormatRs(tx.Amount))
+		html := mailer.ReceiptHTML(ref, tx.Method, tx.TableName, tx.Amount, tx.CreatedAt, lines, tx.FiscalID)
+		text := mailer.ReceiptText(ref, tx.Method, tx.TableName, tx.Amount, tx.CreatedAt, lines, tx.FiscalID)
+		id, serr := h.emailSvc.Send(c.Request.Context(), to, subject, html, text)
+		if serr != nil {
+			ginLog("receipt email to " + to + " failed: " + serr.Error())
+			c.JSON(http.StatusBadGateway, gin.H{"error": "could not send email: " + serr.Error()})
+			return
+		}
+		ginLog("receipt emailed to " + to + " (resend id: " + id + ")")
+		c.JSON(http.StatusOK, gin.H{"message": "receipt emailed to " + to, "to": to})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "receipt emailed to " + to, "to": to})
+	if h.mailer != nil && h.mailer.Configured() {
+		if merr := h.mailer.SendReceiptEmail(to, ref, tx.Method, tx.TableName, tx.Amount, tx.CreatedAt, lines, tx.FiscalID); merr != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "could not send email: " + merr.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "receipt emailed to " + to, "to": to})
+		return
+	}
+
+	c.JSON(http.StatusServiceUnavailable, gin.H{
+		"error": "email is not configured on the server (set RESEND_API_KEY and EMAIL_FROM, or SMTP_HOST and SMTP_FROM)",
+	})
 }
 
 func (h *TransactionHandler) ManualPayment(c *gin.Context) {
@@ -194,7 +241,7 @@ func (h *TransactionHandler) ManualPayment(c *gin.Context) {
 		BranchID: strPtr(branch),
 	}
 
-	if err := h.repo.Create(c.Request.Context(), tx); err != nil {
+	if _, err := h.repo.Create(c.Request.Context(), tx); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

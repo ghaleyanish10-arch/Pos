@@ -5,13 +5,16 @@ import (
 )
 
 type Recipe struct {
-	ID         string       `json:"id"`
-	Name       string       `json:"name"`
-	MenuItemID *string      `json:"menu_item_id"`
-	TargetCost float64      `json:"target_cost"`
-	BranchID   *string      `json:"branch_id"`
-	CreatedAt  time.Time    `json:"created_at"`
-	Lines      []RecipeLine `json:"lines,omitempty"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	MenuItemID   *string      `json:"menu_item_id"`
+	MenuItemName *string      `json:"menu_item_name,omitempty"`
+	MenuPrice    *float64     `json:"menu_price,omitempty"`
+	PlateCost    *float64     `json:"plate_cost,omitempty"`
+	TargetCost   float64      `json:"target_cost"`
+	BranchID     *string      `json:"branch_id"`
+	CreatedAt    time.Time    `json:"created_at"`
+	Lines        []RecipeLine `json:"lines,omitempty"`
 }
 
 type RecipeLine struct {
@@ -23,10 +26,10 @@ type RecipeLine struct {
 }
 
 type CreateRecipeRequest struct {
-	Name       string            `json:"name" binding:"required"`
-	MenuItemID string            `json:"menu_item_id"`
-	TargetCost float64           `json:"target_cost" binding:"required"`
-	Lines      []RecipeLineReq   `json:"lines"`
+	Name       string          `json:"name" binding:"required"`
+	MenuItemID string          `json:"menu_item_id"`
+	TargetCost float64         `json:"target_cost"`
+	Lines      []RecipeLineReq `json:"lines"`
 }
 
 type RecipeLineReq struct {

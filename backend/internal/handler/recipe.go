@@ -74,3 +74,13 @@ func (h *RecipeHandler) Update(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "recipe updated"})
 }
+
+// Delete soft-deletes a recipe. Idempotent in the repo: a second delete of
+// the same id still answers 200.
+func (h *RecipeHandler) Delete(c *gin.Context) {
+	if err := h.repo.Delete(c.Request.Context(), c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "recipe deleted"})
+}

@@ -91,7 +91,8 @@ export function SettingsProvider({ children }) {
           ...s,
           theme: res.theme || s.theme,
           paymentMethods: res.payment_methods || s.paymentMethods,
-          deliveryZones: res.delivery_zones || s.deliveryZones
+          deliveryZones: res.delivery_zones || s.deliveryZones,
+          taxRate: res.tax_rate != null ? Number(res.tax_rate) : s.taxRate
         }));
       } catch {
         /* keep static defaults as fallback */
@@ -106,6 +107,7 @@ export function SettingsProvider({ children }) {
     if (patch.theme !== undefined) apiPayload.theme = patch.theme;
     if (patch.paymentMethods !== undefined) apiPayload.payment_methods = patch.paymentMethods;
     if (patch.deliveryZones !== undefined) apiPayload.delivery_zones = patch.deliveryZones;
+    if (patch.taxRate !== undefined) apiPayload.tax_rate = Number(patch.taxRate);
     if (Object.keys(apiPayload).length > 0) {
       api('/store/settings', { method: 'PUT', body: apiPayload }).catch(() => {});
     }

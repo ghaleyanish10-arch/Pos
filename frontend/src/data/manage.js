@@ -100,10 +100,10 @@ export const reservations = [
 
 
 export const waitlist = [
-{ name: 'Bikash R.', party: 3, waited: '12 min', quoted: '20 min' },
-{ name: 'Sara P.', party: 2, waited: '8 min', quoted: '15 min' },
-{ name: 'Nabin & co.', party: 5, waited: '22 min', quoted: '30 min' },
-{ name: 'Josh M.', party: 2, waited: '4 min', quoted: '25 min' }];
+{ id: 'demo-wl-1', name: 'Bikash R.', party: 3, waited: '12 min', quoted: '20 min' },
+{ id: 'demo-wl-2', name: 'Sara P.', party: 2, waited: '8 min', quoted: '15 min' },
+{ id: 'demo-wl-3', name: 'Nabin & co.', party: 5, waited: '22 min', quoted: '30 min' },
+{ id: 'demo-wl-4', name: 'Josh M.', party: 2, waited: '4 min', quoted: '25 min' }];
 
 
 export const stockLocations = ['Main floor', 'Bar', 'Upstairs'];

@@ -49,6 +49,7 @@ func (h *StoreHandler) UpdateSettings(c *gin.Context) {
 		Theme:          req.Theme,
 		DeliveryZones:  req.DeliveryZones,
 		PaymentMethods: req.PaymentMethods,
+		TaxRate:        req.TaxRate,
 	}
 
 	if err := h.repo.UpsertSettings(c.Request.Context(), settings); err != nil {

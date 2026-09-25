@@ -109,8 +109,21 @@ func (h *ClockInHandler) SwitchRole(c *gin.Context) {
 		ginLog("role switch pin reset failed: " + serr.Error())
 	}
 
+	// Bump the token version first so this switch immediately invalidates every
+	// refresh token issued to this account BEFORE the swap (login's pair, any
+	// earlier switch session). The re-minted session token carries the new
+	// version; the refresh validator compares claims against the live counter,
+	// so the stale refresh is dead server-side — not merely ignored client-side.
+	tokenVersion, berr := h.authSvc.BumpTokenVersion(c.Request.Context(), status.UserID)
+	if berr != nil {
+		h.clockAudit(c, status.UserID, status.Name, status.Role, "role-switch.failed",
+			"role switch failed: could not rotate token version", base)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate session"})
+		return
+	}
+
 	// Same shift-length session as clock-in, just worn as a different role.
-	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, dbRole, status.BranchID, h.config.JWTSecret, h.config.ShiftTTL)
+	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, dbRole, status.BranchID, tokenVersion, h.config.JWTSecret, h.config.ShiftTTL)
 	if terr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue session token"})
 		return

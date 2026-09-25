@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -83,6 +84,10 @@ func (h *BookingHandler) CreateReservation(c *gin.Context) {
 	}
 
 	if err := h.repo.CreateReservation(c.Request.Context(), res); err != nil {
+		if errors.Is(err, repo.ErrTableAlreadyReserved) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

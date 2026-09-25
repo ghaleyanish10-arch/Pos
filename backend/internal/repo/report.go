@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mesa-os/backend/internal/model"
@@ -219,6 +220,20 @@ func (r *ReportRepo) Overview(ctx context.Context, branchID string, days int, of
 	if err := r.db.QueryRow(ctx, refundQuery, plainArgs...).Scan(&o.RefundsTotal, &o.RefundsCount); err != nil {
 		return nil, err
 	}
+
+	// VAT collected is derived from the window's settled sales and the branch's
+	// configured tax rate (store_settings.tax_rate, default 13). Actual per-item
+	// tax is not stored on transactions, so this mirrors the Finance page's
+	// client-side derivation: round(sales * rate / 100). Net sales are what the
+	// business actually keeps after refunds.
+	taxRate := 13.0
+	if branchID != "" {
+		if err := r.db.QueryRow(ctx, `SELECT tax_rate FROM store_settings WHERE branch_id = $1`, branchID).Scan(&taxRate); err != nil {
+			taxRate = 13.0
+		}
+	}
+	o.TaxCollected = math.Round(o.Sales * taxRate / 100)
+	o.NetSales = o.Sales - o.RefundsTotal
 
 	mixRows, err := r.db.Query(ctx,
 		`SELECT t.method, COALESCE(SUM(t.amount), 0), COUNT(*)`+txnSource+txnBranchCond+txnSince+` GROUP BY t.method ORDER BY 2 DESC`, txnArgs...)

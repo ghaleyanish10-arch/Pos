@@ -36,37 +36,40 @@ import { useTables } from '../state/TableContext';
 import { useSettings } from '../state/SettingsContext';
 import { useDevice } from '../state/DeviceContext';
 import { floorRooms } from '../data/pos';
+import { TABLE_STATE_META } from '../data/tableStates';
 import { api } from '../api/client';
 import { GatewayTiles } from '../components/pay/GatewayTiles';
 import { SplitBill } from '../components/pay/SplitBill';
 import { printSplitReceipts } from '../utils/printReceipt';
 
 // --- per-state presentation. Icon + label + pattern, so status is readable
-//     even without colour (the legend up top repeats these shapes).
+//     even without colour (the legend up top repeats these shapes). Labels
+//     come from the shared TABLE_STATE_META so every list of tables in the app
+//     (this page, Register's assign-a-table dialog) uses the same wording.
 const STATE_META = {
   Open: {
-    label: 'Vacant',
+    label: TABLE_STATE_META.Open.label,
     icon: null,
     band: 'bg-canvas text-meta',
     tile: 'border-line bg-surface',
     legend: 'border-line bg-canvas text-meta'
   },
   Seated: {
-    label: 'Seated',
+    label: TABLE_STATE_META.Seated.label,
     icon: <UsersIcon className="h-3 w-3" />,
     band: 'bg-tint-amber text-status-amber',
     tile: 'border-status-amber/40 bg-surface',
     legend: 'border-status-amber/30 bg-tint-amber text-status-amber'
   },
   'Check dropped': {
-    label: 'Check dropped',
+    label: TABLE_STATE_META['Check dropped'].label,
     icon: <ReceiptIcon className="h-3 w-3" />,
     band: 'bg-tint-blue text-status-blue',
     tile: 'border-status-blue/40 bg-surface',
     legend: 'border-status-blue/30 bg-tint-blue text-status-blue'
   },
   'Needs attention': {
-    label: 'Action needed',
+    label: TABLE_STATE_META['Needs attention'].label,
     icon: <AlertTriangleIcon className="h-3 w-3" />,
     band: 'bg-tint-red text-status-red',
     tile: 'border-status-red/50',
@@ -102,6 +105,14 @@ const coversOf = (t) => {
   return m ? Number(m[1]) : 1;
 };
 
+// A merged head table renders its name plus every merged-away table's name on
+// one card ("T8 + T9"). mergedWith carries the raw server names.
+const mergedLabel = (t) => (t.mergedWith?.length > 0
+  ? `${t.name} + ${t.mergedWith.join(' + ')}`
+  : t.name);
+
+const mergedSeatsOf = (t) => t.seats + (t.mergedSeats || 0);
+
 const voidReasons = ['Comp', 'Mistake', 'Guest walked', 'Other'];
 
 const qrFor = (table) => `${window.location.origin}/register/customer?table=${encodeURIComponent(table.name)}`;
@@ -109,6 +120,8 @@ const qrFor = (table) => `${window.location.origin}/register/customer?table=${en
 function TableTile({ t, active, onOpen, onEdit, onQr, canEdit, held, order }) {
   const meta = STATE_META[t.state] || STATE_META.Open;
   const occupied = t.state !== 'Open';
+  const merged = t.mergedWith?.length > 0;
+  const totalSeats = mergedSeatsOf(t);
   const covers = coversOf(t);
   const mins = elapsedMin(t);
   const res = RESERVED[t.name];
@@ -123,7 +136,7 @@ function TableTile({ t, active, onOpen, onEdit, onQr, canEdit, held, order }) {
       onClick={onOpen}
       aria-pressed={active}
       className={`group relative overflow-hidden rounded-xl border text-left transition-all duration-150 ease-soft hover:shadow-card ${
-        meta.tile
+        merged ? 'border-status-blue/40 bg-surface col-span-2' : meta.tile
       } ${active ? 'ring-2 ring-ink ring-offset-2 ring-offset-surface' : ''}`}
       style={stripes}>
 
@@ -149,9 +162,11 @@ function TableTile({ t, active, onOpen, onEdit, onQr, canEdit, held, order }) {
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-3xl font-black leading-none text-ink">{t.name}</p>
+            <p className="text-3xl font-black leading-none text-ink">
+              {mergedLabel(t)}
+            </p>
             <p className="mt-1.5 text-xs font-semibold text-meta">
-              {t.seats} seats{occupied ? ` · ${covers} of ${t.seats}` : ''}
+              {totalSeats} seats{occupied ? ` · ${covers} of ${totalSeats}` : ''}
             </p>
           </div>
           <div className="flex items-center gap-1 lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 focus-within:opacity-100">
@@ -198,8 +213,8 @@ function TableTile({ t, active, onOpen, onEdit, onQr, canEdit, held, order }) {
         )}
 
         {/* occupancy — shape not colour, so it reads in mono */}
-        <div className="mt-2.5 flex items-center gap-1" aria-label={`${covers} of ${t.seats} seats occupied`}>
-          {Array.from({ length: Math.max(t.seats, 1) }).map((_, i) => (
+        <div className="mt-2.5 flex items-center gap-1" aria-label={`${covers} of ${totalSeats} seats occupied`}>
+          {Array.from({ length: Math.max(totalSeats, 1) }).map((_, i) => (
             <span
               key={i}
               className={`text-base leading-none ${i < covers ? 'text-ink' : 'text-meta/30'}`}
@@ -229,6 +244,12 @@ function TableTile({ t, active, onOpen, onEdit, onQr, canEdit, held, order }) {
               Held
             </span>
           )}
+          {merged && (
+            <span className="flex items-center gap-1 rounded-full border border-status-blue/25 bg-tint-blue px-2 py-0.5 text-xs font-bold text-status-blue">
+              <CombineIcon className="h-3 w-3" />
+              Merged · {t.mergedWith.length + 1}
+            </span>
+          )}
         </div>
       </div>
     </button>
@@ -240,6 +261,8 @@ const STATE_ORDER = ['Needs attention', 'Seated', 'Check dropped', 'Open'];
 function PhoneTableRow({ t, held, onOpen, order }) {
   const meta = STATE_META[t.state] || STATE_META.Open;
   const occupied = t.state !== 'Open';
+  const merged = t.mergedWith?.length > 0;
+  const totalSeats = mergedSeatsOf(t);
   const covers = coversOf(t);
   const mins = elapsedMin(t);
   const res = RESERVED[t.name];
@@ -275,9 +298,9 @@ function PhoneTableRow({ t, held, onOpen, order }) {
 
         <div className="mt-2.5 flex items-end justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-3xl font-black leading-none text-ink">{t.name}</p>
+            <p className="text-3xl font-black leading-none text-ink">{mergedLabel(t)}</p>
             <p className="mt-1 text-xs font-semibold text-meta">
-              {t.seats} seats{occupied ? ` · ${covers} of ${t.seats}` : ''}
+              {totalSeats} seats{occupied ? ` · ${covers} of ${totalSeats}` : ''}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -290,6 +313,12 @@ function PhoneTableRow({ t, held, onOpen, order }) {
             {held && (
               <span className="flex items-center gap-1 rounded-full border border-status-amber/25 bg-tint-amber px-2 py-0.5 text-xs font-bold text-status-amber">
                 Held
+              </span>
+            )}
+            {merged && (
+              <span className="flex items-center gap-1 rounded-full border border-status-blue/25 bg-tint-blue px-2 py-0.5 text-xs font-bold text-status-blue">
+                <CombineIcon className="h-3 w-3" />
+                Merged
               </span>
             )}
           </div>
@@ -341,7 +370,7 @@ export function FrontOfHouse() {
     renameRoom,
     removeRoom,
     setRoom,
-    markOrdered,
+    refreshTables,
     orderInfoOf
   } = useTables();
   const [selected, setSelected] = useState(null);
@@ -354,9 +383,12 @@ export function FrontOfHouse() {
   useEffect(() => {
     if (isPhone) return;
     setSelected((prev) => {
-      if (prev && floorTables.some((t) => t.name === prev.name)) return prev;
-      const seated = floorTables.find((t) => t.state !== 'Open');
-      return seated || floorTables[0] || null;
+      if (!prev) {
+        const seated = floorTables.find((t) => t.state !== 'Open');
+        return seated || floorTables[0] || null;
+      }
+      const fresh = floorTables.find((t) => t.name === prev.name);
+      return fresh || floorTables.find((t) => t.state !== 'Open') || floorTables[0] || null;
     });
   }, [floorTables, isPhone]);
 
@@ -391,9 +423,13 @@ export function FrontOfHouse() {
   // --- table actions ---
   const [viewOpen, setViewOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [flagOpen, setFlagOpen] = useState(false);
+  const [flagNote, setFlagNote] = useState('');
 
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('');
@@ -401,6 +437,7 @@ export function FrontOfHouse() {
   const [payCovers, setPayCovers] = useState(1);
   const [payView, setPayView] = useState('simple'); // simple | split — one sheet, two views
   const [splitBusy, setSplitBusy] = useState(false);
+  const [payBusy, setPayBusy] = useState(false);
 
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
@@ -408,6 +445,13 @@ export function FrontOfHouse() {
   const [voidTarget, setVoidTarget] = useState(null);
 
   const sel = isPhone ? selected : (selected || floorTables[0] || null);
+  // The selected table's display name — combined ("T8 + T9") when it is the
+  // head of a merged group, so the detail panel and dialogs name the whole card.
+  const selLabel = sel
+    ? (sel.mergedWith?.length > 0
+        ? `${labelOf(sel.name)} + ${sel.mergedWith.map((n) => labelOf(n)).join(' + ')}`
+        : labelOf(sel.name))
+    : '';
   // Line items come straight from the backend bill endpoint (GET
   // /pos/tables/:id/bill), cached per order id: the /tables poll tells us
   // WHICH order sits on each table (id, total, item count); line items are
@@ -454,7 +498,11 @@ export function FrontOfHouse() {
     amount: (it.qty || 1) * it.price,
     qty: it.qty || 1
   }));
-  const billTotal = selBill ? selBill.total : (selOrder?.total || 0);
+  const billTotal = selBill
+    ? (typeof selBill.total === 'number' && Number.isFinite(selBill.total)
+        ? selBill.total
+        : tableBillLive.reduce((sum, l) => sum + l.amount, 0))
+    : (selOrder?.total || 0);
   const liveOrderId = selBill?.order_id || selOrder?.orderId || '';
 
   /** Live order info for a tile: poll data + cached line items (if fetched). */
@@ -477,9 +525,10 @@ export function FrontOfHouse() {
 
   const confirmPayment = useCallback(async () => {
     const amt = parseInt(payAmount.replace(/\D/g, ''), 10) || 0;
-    if (amt <= 0 || !selected) return;
+    if (amt <= 0 || !selected || payBusy) return;
+    setPayBusy(true);
     try {
-      await api('/transactions', {
+      const resp = await api('/transactions', {
         method: 'POST',
         body: {
           order_id: liveOrderId,
@@ -498,18 +547,23 @@ export function FrontOfHouse() {
       freeTable(selected.name);
       play('paymentSuccess');
       toast.success(`Paid Rs ${amt.toLocaleString('en-IN')} · ${payMethod} · ${labelOf(selected.name)} · table open`);
-    } catch {
+      if (resp?.warning) toast(resp.warning, { tone: 'red', silent: true });
+    } catch (err) {
       play('paymentFailed');
-      toast('Payment could not be recorded right now — no backend connection', { tone: 'red', silent: true });
+      console.error('confirmPayment failed:', err);
+      toast(err?.message || 'Payment could not be recorded right now — no backend connection', { tone: 'red', silent: true });
+    } finally {
+      setPayBusy(false);
     }
-  }, [payAmount, payMethod, selected, liveOrderId, freeTable, labelOf, toast, play]);
+  }, [payAmount, payMethod, selected, liveOrderId, payBusy, freeTable, labelOf, toast, play]);
 
   const confirmSplit = useCallback(async (segments) => {
     if (!selected) return;
     setSplitBusy(true);
     try {
+      let lastResp = null;
       for (let i = 0; i < segments.length; i++) {
-        await api('/transactions', {
+        lastResp = await api('/transactions', {
           method: 'POST',
           body: {
             order_id: liveOrderId,
@@ -534,8 +588,10 @@ export function FrontOfHouse() {
       }, settings);
       const sum = segments.reduce((s, g) => s + g.amount, 0);
       toast.success(`Split bill settled · Rs ${sum.toLocaleString('en-IN')} across ${segments.length} guests · ${labelOf(selected.name)} · table open`);
-    } catch {
-      toast('Split could not be recorded right now — no backend connection', { tone: 'red' });
+      if (lastResp?.warning) toast(lastResp.warning, { tone: 'red', silent: true });
+    } catch (err) {
+      console.error('confirmSplit failed:', err);
+      toast(err?.message || 'Split could not be recorded right now — no backend connection', { tone: 'red' });
     } finally {
       setSplitBusy(false);
     }
@@ -602,21 +658,56 @@ export function FrontOfHouse() {
     navigate(`/register?table=${encodeURIComponent(sel.name)}`);
   }, [sel, navigate]);
 
-  const confirmTransfer = useCallback((target) => {
-    if (!sel || !target || target.name === sel.name) return;
-    markOrdered(target.name);
-    freeTable(sel.name);
-    setSelected(target);
-    setTransferOpen(false);
-    toast.success(`Transferred ${labelOf(sel.name)} → ${labelOf(target.name)}`);
-  }, [sel, markOrdered, freeTable, labelOf, toast]);
+  const confirmTransfer = useCallback(async (target) => {
+    if (!sel || !target || target.name === sel.name || transferBusy) return;
+    const srcOrder = orderInfoOf(sel.name);
+    if (!srcOrder?.orderId) {
+      toast('No open order on this table to transfer', { tone: 'red', silent: true });
+      return;
+    }
+    setTransferBusy(true);
+    try {
+      // Server moves the order's table_id; occupancy is derived from open
+      // orders, so the poll flips source→Vacant and target→Seated for real.
+      await api(`/orders/${srcOrder.orderId}/transfer`, {
+        method: 'PUT',
+        body: { table_id: target.id || target.name }
+      });
+      setTransferOpen(false);
+      setSelected(target);
+      refreshTables();
+      toast.success(`Transferred ${labelOf(sel.name)} → ${labelOf(target.name)}`);
+    } catch (err) {
+      console.error('confirmTransfer failed:', err);
+      toast(err?.message || 'Transfer failed — no backend connection', { tone: 'red', silent: true });
+    } finally {
+      setTransferBusy(false);
+    }
+  }, [sel, transferBusy, orderInfoOf, refreshTables, labelOf, toast]);
 
-  const confirmMerge = useCallback((src) => {
-    if (!src || !sel || src.name === sel.name) return;
-    freeTable(src.name);
-    setMergeOpen(false);
-    toast.success(`Merged ${labelOf(src.name)} into ${labelOf(sel.name)}`);
-  }, [sel, freeTable, labelOf, toast]);
+  const confirmMerge = useCallback(async (src) => {
+    if (!src || !sel || src.name === sel.name || mergeBusy) return;
+    setMergeBusy(true);
+    try {
+      // Server folds the source table's check into the target's combined check
+      // and points the source table at the target (merged_into), so the poll
+      // re-renders ONE spanning card "T8 + T9" with the combined bill — for
+      // real, no fake toast.
+      await api(`/pos/tables/${sel.id}/merge`, {
+        method: 'PUT',
+        body: { source_table_id: src.id || src.name }
+      });
+      setMergeOpen(false);
+      setSelected(sel);
+      refreshTables();
+      toast.success(`Merged ${labelOf(src.name)} into ${labelOf(sel.name)}`);
+    } catch (err) {
+      console.error('confirmMerge failed:', err);
+      toast(err?.message || 'Merge failed — no backend connection', { tone: 'red', silent: true });
+    } finally {
+      setMergeBusy(false);
+    }
+  }, [sel, mergeBusy, refreshTables, labelOf, toast]);
 
   const confirmMove = useCallback((room) => {
     if (!sel || !room) return;
@@ -640,6 +731,53 @@ export function FrontOfHouse() {
     toast.success(`Table ${labelOf(sel.name)} closed · clean ready`);
   }, [sel, freeTable, labelOf, toast, floorTables]);
 
+  // Check / attention flags are server truth — each call nudges a poll and
+  // every device picks up the derived state within a refresh.
+  const dropCheck = useCallback(async (t) => {
+    if (!t) return;
+    try {
+      await api(`/pos/tables/${t.id}/drop-check`, { method: 'POST' });
+      toast.success(`${labelOf(t.name)}: check dropped`);
+    } catch {
+      toast.error(`Could not mark ${labelOf(t.name)} — check ${labelOf(t.name)}'s bill`);
+    }
+    freeTable();
+  }, [labelOf, toast, freeTable]);
+
+  const clearCheck = useCallback(async (t) => {
+    if (!t) return;
+    try {
+      await api(`/pos/tables/${t.id}/clear-check`, { method: 'POST' });
+      toast.success(`${labelOf(t.name)}: check cleared`);
+    } catch {
+      toast.error(`Could not clear the check on ${labelOf(t.name)}`);
+    }
+    freeTable();
+  }, [labelOf, toast, freeTable]);
+
+  const confirmFlag = useCallback(async () => {
+    if (!sel) return;
+    setFlagOpen(false);
+    try {
+      await api(`/pos/tables/${sel.id}/flag`, { method: 'POST', body: { note: flagNote.trim() } });
+      toast.success(`${labelOf(sel.name)} flagged for attention`);
+    } catch {
+      toast.error(`Could not flag ${labelOf(sel.name)}`);
+    }
+    freeTable();
+  }, [sel, flagNote, labelOf, toast, freeTable]);
+
+  const unflag = useCallback(async (t) => {
+    if (!t) return;
+    try {
+      await api(`/pos/tables/${t.id}/unflag`, { method: 'POST' });
+      toast.success(`${labelOf(t.name)}: attention cleared`);
+    } catch {
+      toast.error(`Could not clear the flag on ${labelOf(t.name)}`);
+    }
+    freeTable();
+  }, [labelOf, toast, freeTable]);
+
   const activeTables = filter === 'Held'
     ? heldOrders
     : floorTables.filter((t) => heldOrders.every((h) => h.name !== t.name));
@@ -657,10 +795,12 @@ export function FrontOfHouse() {
     { label: 'View order', icon: <EyeIcon className="h-4 w-4" />, run: openView, disabled: !selOccupied },
     { label: 'Add items', icon: <PlusIcon className="h-4 w-4" />, run: addItems, disabled: false },
     { label: 'Transfer', icon: <ArrowLeftRightIcon className="h-4 w-4" />, run: () => sel && setTransferOpen(true), disabled: !selOccupied },
-    { label: 'Merge', icon: <CombineIcon className="h-4 w-4" />, run: () => sel && setMergeOpen(true), disabled: !selOccupied },
+    { label: 'Merge', icon: <CombineIcon className="h-4 w-4" />, run: () => sel && setMergeOpen(true), disabled: !selOccupied || (sel.mergedWith?.length > 0) },
     { label: 'Split bill', icon: <SplitIcon className="h-4 w-4" />, run: openSplitView, disabled: !selOccupied || billTotal <= 0 },
     { label: 'Move table', icon: <MoveIcon className="h-4 w-4" />, run: () => sel && setMoveOpen(true), disabled: false },
     { label: 'Pay', icon: <BanknoteIcon className="h-4 w-4" />, run: openPay, disabled: !selOccupied },
+    { label: sel.billDropped ? 'Clear check' : 'Drop check', icon: <ReceiptIcon className="h-4 w-4" />, run: () => sel && (sel.billDropped ? clearCheck(sel) : dropCheck(sel)), disabled: !selOccupied && !sel.billDropped },
+    { label: sel.needsAttention ? 'Clear flag' : 'Flag table', icon: <AlertTriangleIcon className="h-4 w-4" />, run: () => sel && (sel.needsAttention ? unflag(sel) : setFlagOpen(true)), disabled: false },
     { label: 'Close', icon: <CheckIcon className="h-4 w-4" />, run: () => sel && setCloseOpen(true), disabled: !selOccupied }
   ] : [];
 
@@ -795,10 +935,10 @@ export function FrontOfHouse() {
             )}
           </Card>
 
-          <Card>
+          <Card className="scroll-thin lg:sticky lg:top-8 lg:max-h-[calc(100vh-8rem)] lg:self-start lg:overflow-y-auto">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-extrabold text-ink">{sel ? labelOf(sel.name) : '—'}</h2>
+                <h2 className="text-lg font-extrabold text-ink">{sel ? selLabel : '—'}</h2>
                 <p className="text-sm text-meta">{sel ? sel.detail : ''}</p>
               </div>
               {sel && <Pill tone={STATE_META[sel.state] ? (sel.state === 'Seated' ? 'amber' : sel.state === 'Check dropped' ? 'blue' : sel.state === 'Needs attention' ? 'red' : 'neutral') : 'neutral'} dot>{sel.state}</Pill>}
@@ -819,9 +959,12 @@ export function FrontOfHouse() {
               )}
             </div>
 
-            {sel && sel.state === 'Needs attention' &&
+            {sel && sel.needsAttention &&
               <div className="mt-4">
-                <AlertBanner>Allergy note open · peanuts — confirm with kitchen</AlertBanner>
+                <AlertBanner>
+                  {sel.note ? `Flag: ${sel.note}` : 'Table flagged — needs attention'}
+                  {sel.billDropped && ' · Check out'}
+                </AlertBanner>
               </div>
             }
 
@@ -897,7 +1040,7 @@ export function FrontOfHouse() {
         <BottomSheet
           open={!!sel}
           onClose={() => setSelected(null)}
-          title={sel ? labelOf(sel.name) : ''}
+          title={sel ? selLabel : ''}
           subtitle={sel ? `${sel.state}${sel.detail ? ` · ${sel.detail}` : ''}` : ''}>
           {sel && (
             <div className="flex flex-col gap-4">
@@ -915,8 +1058,11 @@ export function FrontOfHouse() {
                 )}
               </div>
 
-              {sel.state === 'Needs attention' &&
-                <AlertBanner>Allergy note open · peanuts — confirm with kitchen</AlertBanner>
+              {sel.needsAttention &&
+                <AlertBanner>
+                  {sel.note ? sel.note : 'Table flagged for attention'}
+                  {sel.billDropped && ' · Check out'}
+                </AlertBanner>
               }
 
               <div className="flex items-center justify-between rounded-xl border border-line bg-canvas px-3.5 py-3">
@@ -982,7 +1128,7 @@ export function FrontOfHouse() {
       <Dialog
         open={transferOpen}
         onClose={() => setTransferOpen(false)}
-        title={`Transfer ${sel ? labelOf(sel.name) : ''}`}
+        title={`Transfer ${sel ? selLabel : ''}`}
         subtitle="Move the guests and their order to an empty table"
         width="max-w-md"
         footer={
@@ -998,51 +1144,55 @@ export function FrontOfHouse() {
                 <button
                   key={t.name}
                   type="button"
+                  disabled={transferBusy}
                   onClick={() => confirmTransfer(t)}
-                  className="flex items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-left text-sm font-bold text-ink transition-colors duration-150 ease-soft hover:border-ink/40 hover:bg-canvas">
+                  className="flex items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-left text-sm font-bold text-ink transition-colors duration-150 ease-soft hover:border-ink/40 hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50">
                   <span>{labelOf(t.name)}</span>
                   <span className="font-mono text-xs font-semibold text-meta">{t.seats}p</span>
                 </button>
               )}
           </div>
         )}
+        {transferBusy && <p className="mt-3 text-center text-sm font-semibold text-meta">Moving order…</p>}
       </Dialog>
 
       {/* merge */}
       <Dialog
         open={mergeOpen}
         onClose={() => setMergeOpen(false)}
-        title={`Merge into ${sel ? labelOf(sel.name) : ''}`}
-        subtitle="Pick an occupied table to fold into this one — its table turns over"
+        title={`Merge into ${sel ? selLabel : ''}`}
+        subtitle="Pick another occupied table to fold into this one — both become one check and one card"
         width="max-w-md"
         footer={
           <Button variant="outline" onClick={() => setMergeOpen(false)}>Cancel</Button>
         }>
-        {floorTables.filter((t) => t.name !== sel?.name && t.state !== 'Open').length === 0 ? (
+        {floorTables.filter((t) => t.name !== sel?.name && t.orderId && !t.mergedWith?.length).length === 0 ? (
           <p className="text-sm text-meta">No other occupied tables to merge.</p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {floorTables
-              .filter((t) => t.name !== sel?.name && t.state !== 'Open')
+              .filter((t) => t.name !== sel?.name && t.orderId && !t.mergedWith?.length)
               .map((t) =>
                 <button
                   key={t.name}
                   type="button"
+                  disabled={mergeBusy}
                   onClick={() => confirmMerge(t)}
-                  className="flex items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-left text-sm font-bold text-ink transition-colors duration-150 ease-soft hover:border-ink/40 hover:bg-canvas">
+                  className="flex items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-left text-sm font-bold text-ink transition-colors duration-150 ease-soft hover:border-ink/40 hover:bg-canvas disabled:opacity-50">
                   <span>{labelOf(t.name)}</span>
                   <span className="font-mono text-xs font-semibold text-meta">{t.seats}p</span>
                 </button>
               )}
           </div>
         )}
+        {mergeBusy && <p className="mt-3 text-center text-sm font-semibold text-meta">Merging tables…</p>}
       </Dialog>
 
       {/* move table to another room */}
       <Dialog
         open={moveOpen}
         onClose={() => setMoveOpen(false)}
-        title={`Move ${sel ? labelOf(sel.name) : ''}`}
+        title={`Move ${sel ? selLabel : ''}`}
         subtitle="Relocate this table to another room on the floor plan"
         width="max-w-md"
         footer={
@@ -1070,7 +1220,7 @@ export function FrontOfHouse() {
       <Dialog
         open={closeOpen}
         onClose={() => setCloseOpen(false)}
-        title={`Close ${sel ? labelOf(sel.name) : ''}?`}
+        title={`Close ${sel ? selLabel : ''}?`}
         subtitle="No payment is recorded when you close this way"
         footer={
           <>
@@ -1086,12 +1236,38 @@ export function FrontOfHouse() {
         </p>
       </Dialog>
 
+      {/* flag table */}
+      <Dialog
+        open={flagOpen}
+        onClose={() => setFlagOpen(false)}
+        title={`Flag ${sel ? selLabel : ''}`}
+        subtitle="Mark the table as needing attention (allergy, complaint, spill …)"
+        width="max-w-md"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setFlagOpen(false)}>Cancel</Button>
+            <Button variant="red" onClick={confirmFlag}>Flag table</Button>
+          </>
+        }>
+        <Field label="Note">
+          <input
+            type="text"
+            value={flagNote}
+            onChange={(e) => setFlagNote(e.target.value)}
+            placeholder="e.g. peanuts allergy — confirm with kitchen"
+            className={inputClass} />
+        </Field>
+        <p className="mt-3 text-caption text-meta">
+          The floor shows <span className="font-semibold text-ink">Action needed</span> until someone clears the flag.
+        </p>
+      </Dialog>
+
       {/* payment */}
       <Dialog
         open={paymentOpen}
         onClose={() => { setPaymentOpen(false); setPayView('simple'); }}
         title={payView === 'split' ? 'Split the bill' : 'Collect payment'}
-        subtitle={`${sel ? labelOf(sel.name) : ''} · Rs ${billTotal.toLocaleString('en-IN')} due`}
+        subtitle={`${sel ? selLabel : ''} · Rs ${billTotal.toLocaleString('en-IN')} due`}
         width={payView === 'split' ? 'max-w-lg' : 'max-w-md'}
         footer={
           payView === 'split' ? (
@@ -1099,8 +1275,8 @@ export function FrontOfHouse() {
           ) : (
             <>
               <Button variant="outline" onClick={() => setPaymentOpen(false)}>Cancel</Button>
-              <Button variant="dark" full onClick={confirmPayment}>
-                Pay Rs {parseInt(payAmount.replace(/\D/g, ''), 10).toLocaleString('en-IN') || '0'}
+              <Button variant="dark" full onClick={confirmPayment} disabled={payBusy}>
+                {payBusy ? 'Recording…' : `Pay Rs ${parseInt(payAmount.replace(/\D/g, ''), 10).toLocaleString('en-IN') || '0'}`}
               </Button>
             </>
           )

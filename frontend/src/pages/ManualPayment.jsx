@@ -10,7 +10,9 @@ import {
 'lucide-react';
 import { Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Dialog } from '../components/ui/Dialog';
 import { Pill } from '../components/ui/Pill';
+import { inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import { useSettings } from '../state/SettingsContext';
 import { useSound } from '../state/SoundContext';
@@ -38,6 +40,9 @@ export function ManualPayment() {
   // outcome onto the receipt card (real txn id, or offline notice).
   const [record, setRecord] = useState(null); // { id, offline }
   const [paidAt, setPaidAt] = useState('');
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
 
   const confirmPayment = async () => {
     const value = Number(amount || 0);
@@ -56,11 +61,18 @@ export function ManualPayment() {
       setRecord({ id: tx?.id || null, offline: false });
       play('paymentSuccess');
       toast.success(`Rs ${display} payment recorded in Transactions`, { silent: true });
-    } catch {
-      // API offline — keep the local receipt but be honest that nothing was recorded.
-      setRecord({ id: null, offline: true });
-      play('paymentFailed');
-      toast.error('Payment completed, but the server is unreachable — it was not recorded in Transactions', { tone: 'red', silent: true });
+    } catch (err) {
+      console.error('ManualPayment record failed:', err);
+      if (err?.message) {
+        setRecord({ id: null, offline: true });
+        play('paymentFailed');
+        toast.error(err.message, { tone: 'red', silent: true });
+      } else {
+        // API offline — keep the local receipt but be honest that nothing was recorded.
+        setRecord({ id: null, offline: true });
+        play('paymentFailed');
+        toast.error('Payment completed, but the server is unreachable — it was not recorded in Transactions', { tone: 'red', silent: true });
+      }
     }
   };
 
@@ -104,9 +116,10 @@ export function ManualPayment() {
     }
   };
 
-  // Email receipt goes through the same PUT /transactions/:id/email the
-  // Transactions page uses (real SMTP when configured, honest fallback).
-  const handleEmailReceipt = async () => {
+  // The email dialog posts to the same PUT /transactions/:id/email the
+  // Transactions page uses; the server routes it through the configured
+  // email transport and tells us the truth about failures.
+  const openEmailDialog = () => {
     const txId = record?.id;
     if (!txId || record?.offline) {
       toast(record?.offline
@@ -114,19 +127,27 @@ export function ManualPayment() {
         : 'Complete a payment before emailing', { tone: 'amber' });
       return;
     }
-    const to = window.prompt('Email the receipt to', '');
-    if (!to) return;
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim())) {
+    setEmailTo('');
+    setEmailOpen(true);
+  };
+
+  const sendEmailReceipt = async () => {
+    const to = emailTo.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) {
       toast('Enter a valid email address', { tone: 'red' });
       return;
     }
+    setEmailSending(true);
     try {
-      const res = await api(`/transactions/${txId}/email`, { method: 'PUT', body: { to: to.trim() } });
-      toast(res?.message || `Receipt emailed to ${to.trim()}`, { tone: 'green' });
+      const res = await api(`/transactions/${record.id}/email`, { method: 'PUT', body: { to } });
+      toast(res?.message || `Receipt emailed to ${to}`, { tone: 'green' });
+      setEmailOpen(false);
     } catch (e) {
       toast(e?.status === 503
-        ? 'SMTP not configured on the server — sending via your mail app instead'
+        ? 'Email service is not configured on the server'
         : (e?.message || 'Could not send email'), { tone: e?.status === 503 ? 'amber' : 'red' });
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -359,7 +380,7 @@ export function ManualPayment() {
                   </Button>
                 </div>
                 <div className="mt-2 flex gap-2">
-                  <Button size="sm" variant="outline" full onClick={handleEmailReceipt}>
+                  <Button size="sm" variant="outline" full onClick={openEmailDialog}>
                     Email receipt
                   </Button>
                 </div>
@@ -373,6 +394,35 @@ export function ManualPayment() {
           }
         </AnimatePresence>
       </div>
+
+      <Dialog
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Email receipt"
+        subtitle={record?.id ? `Receipt ${String(record.id).slice(0, 8).toUpperCase()}` : undefined}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setEmailOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="dark" full disabled={emailSending} onClick={sendEmailReceipt}>
+              {emailSending ? 'Sending…' : `Send to ${emailTo.trim() || 'customer'}`}
+            </Button>
+          </>}>
+
+        <input
+          className={inputClass}
+          autoFocus
+          type="email"
+          inputMode="email"
+          placeholder="customer@example.com"
+          value={emailTo}
+          onChange={(e) => setEmailTo(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !emailSending) sendEmailReceipt();
+          }}
+        />
+      </Dialog>
     </div>);
 
 }

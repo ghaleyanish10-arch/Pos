@@ -27,21 +27,22 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (s *Service) Login(ctx context.Context, email, password string) (string, string, string, string, error) {
+func (s *Service) Login(ctx context.Context, email, password string) (string, string, string, string, int, error) {
 	var id, passwordHash, role, branchID string
+	var tokenVersion int
 	err := s.db.QueryRow(ctx,
-		`SELECT id, password_hash, role, COALESCE(branch_id::text, '') FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
+		`SELECT id, password_hash, role, COALESCE(branch_id::text, ''), token_version FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
 		normalizeEmail(email),
-	).Scan(&id, &passwordHash, &role, &branchID)
+	).Scan(&id, &passwordHash, &role, &branchID, &tokenVersion)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("invalid credentials")
+		return "", "", "", "", 0, fmt.Errorf("invalid credentials")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
-		return "", "", "", "", fmt.Errorf("invalid credentials")
+		return "", "", "", "", 0, fmt.Errorf("invalid credentials")
 	}
 
-	return id, email, role, branchID, nil
+	return id, email, role, branchID, tokenVersion, nil
 }
 
 func (s *Service) Register(ctx context.Context, name, email, password, role, branchID string) (string, error) {
@@ -72,17 +73,59 @@ func (s *Service) ValidateRefreshToken(ctx context.Context, refreshToken, secret
 	if err != nil {
 		return fmt.Errorf("invalid refresh token")
 	}
+	// Only typ=refresh tokens are redeemable here. Access or session tokens
+	// must not extend their own session — that would let any short-lived
+	// session mint a fresh 7-day pair.
+	if claims.TokenType != TokenTypeRefresh {
+		return fmt.Errorf("invalid refresh token")
+	}
 
-	var exists bool
+	var storedVersion int
 	err = s.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`,
+		`SELECT token_version FROM users WHERE id = $1 AND deleted_at IS NULL`,
 		claims.UserID,
-	).Scan(&exists)
-	if err != nil || !exists {
-		return fmt.Errorf("user not found")
+	).Scan(&storedVersion)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("user not found")
+		}
+		return fmt.Errorf("invalid refresh token")
+	}
+	// The version in the token must match the account's CURRENT version. A
+	// role switch bumps the counter, so every refresh token minted before the
+	// switch is instantly dead server-side — no expiry wait, no replay.
+	if claims.TokenVersion != storedVersion {
+		return fmt.Errorf("invalid refresh token")
 	}
 
 	return nil
+}
+
+// CurrentTokenVersion returns the account's live token version so freshly
+// minted tokens carry the same value the refresh validator compares against.
+func (s *Service) CurrentTokenVersion(ctx context.Context, userID string) (int, error) {
+	var v int
+	err := s.db.QueryRow(ctx, `SELECT token_version FROM users WHERE id = $1`, userID).Scan(&v)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// BumpTokenVersion increments the account's token version and returns the new
+// value. Used by role switch: the re-minted session token carries the new
+// version, and every previously issued refresh token (login, earlier switch)
+// stops validating the moment the bump commits.
+func (s *Service) BumpTokenVersion(ctx context.Context, userID string) (int, error) {
+	var v int
+	err := s.db.QueryRow(ctx,
+		`UPDATE users SET token_version = token_version + 1 WHERE id = $1 RETURNING token_version`,
+		userID,
+	).Scan(&v)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
 }
 
 // MarkEmailVerified stamps email_verified_at once, the first time.

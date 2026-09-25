@@ -9,11 +9,12 @@ import (
 )
 
 type Claims struct {
-	UserID   string `json:"user_id"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	BranchID string `json:"branch_id"`
-	TokenType string `json:"typ,omitempty"`
+	UserID       string `json:"user_id"`
+	Email        string `json:"email"`
+	Role         string `json:"role"`
+	BranchID     string `json:"branch_id"`
+	TokenType    string `json:"typ,omitempty"`
+	TokenVersion int    `json:"token_version,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -23,13 +24,13 @@ type TokenPair struct {
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
-func GenerateTokenPair(userID, email, role, branchID, secret string, accessExpiry, refreshExpiry time.Duration) (*TokenPair, error) {
-	accessToken, err := generateToken(userID, email, role, branchID, secret, accessExpiry)
+func GenerateTokenPair(userID, email, role, branchID string, tokenVersion int, secret string, accessExpiry, refreshExpiry time.Duration) (*TokenPair, error) {
+	accessToken, err := generateToken(TokenTypeAccess, userID, email, role, branchID, tokenVersion, secret, accessExpiry)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := generateToken(userID, email, role, branchID, secret, refreshExpiry)
+	refreshToken, err := generateToken(TokenTypeRefresh, userID, email, role, branchID, tokenVersion, secret, refreshExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -47,21 +48,22 @@ func GenerateTokenPair(userID, email, role, branchID, secret string, accessExpir
 // what happens after. It is intentionally NOT stored server-side: revocation
 // is by TTL (clock-out clears the client side; a future refresh-token
 // revocation table would strengthen this, flagged in the clock-out handler).
-func GenerateSessionToken(userID, email, role, branchID, secret string, ttl time.Duration) (token string, expiresAt int64, err error) {
-	s, err := generateToken(userID, email, role, branchID, secret, ttl)
+func GenerateSessionToken(userID, email, role, branchID string, tokenVersion int, secret string, ttl time.Duration) (token string, expiresAt int64, err error) {
+	s, err := generateToken(TokenTypeAccess, userID, email, role, branchID, tokenVersion, secret, ttl)
 	if err != nil {
 		return "", 0, err
 	}
 	return s, time.Now().Add(ttl).Unix(), nil
 }
 
-func generateToken(userID, email, role, branchID, secret string, expiry time.Duration) (string, error) {
+func generateToken(tokenType, userID, email, role, branchID string, tokenVersion int, secret string, expiry time.Duration) (string, error) {
 	claims := &Claims{
-		UserID:    userID,
-		Email:     email,
-		Role:      role,
-		BranchID:  branchID,
-		TokenType: TokenTypeAccess,
+		UserID:       userID,
+		Email:        email,
+		Role:         role,
+		BranchID:     branchID,
+		TokenType:    tokenType,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

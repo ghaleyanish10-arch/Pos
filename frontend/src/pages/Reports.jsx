@@ -427,6 +427,9 @@ function SlowMoversCard({ rows }) {
 export function Reports() {
   const toast = useToast();
   const [range, setRange] = useState('7 days');
+  // Human-readable window shown under each KPI so the numbers are never
+  // mistaken for another period (Dashboard shows today; Reports defaults to 7).
+  const periodLabel = { 'Today': 'today only', '7 days': 'last 7 days', '28 days': 'last 28 days', 'All time': 'all time' }[range] || 'selected period';
   // Live dashboard: the 30s tick re-runs the fetch effect so new sales,
   // top sellers and slow-movers appear without a manual refresh (same cadence
   // as the kitchen and front-of-house lanes).
@@ -438,6 +441,7 @@ export function Reports() {
   }, []);
   const [overview, setOverview] = useState(null);
   const [loadState, setLoadState] = useState('loading'); // loading | ready | error
+  const [loadError, setLoadError] = useState(null);
 
   const [topSellerRows, setTopSellerRows] = useState([]);
   const [slowMoverRows, setSlowMoverRows] = useState([]);
@@ -480,10 +484,12 @@ export function Reports() {
         const slow = slowRes?.data || [];
         setTopSellerRows(top.slice(0, 8).map((s) => ({ name: s.name, sold: Number(s.count) || 0, revenue: s.revenue != null ? rs(s.revenue) : '—' })));
         setSlowMoverRows(slow.slice(0, 5).map((s) => ({ name: s.name, sold: Number(s.count) || 0, revenue: s.revenue != null ? rs(s.revenue) : '—' })));
+        setLoadError(null);
         setLoadState('ready');
-      } catch {
+      } catch (e) {
         if (cancelled) return;
-        setLoadState('ready'); // empty states below keep the page honest
+        setLoadError(e);
+        setLoadState('ready');
       }
     })();
     return () => { cancelled = true; };
@@ -566,11 +572,38 @@ export function Reports() {
                 <p className="text-caption font-semibold text-meta">{k.label}</p>
                 <p className="mt-1.5 font-mono text-2xl font-extrabold tracking-tight text-ink">{k.value}</p>
                 {k.meta && <p className="mt-0.5 text-xs text-meta">{k.meta}</p>}
+                <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-accent">{periodLabel}</p>
               </div>
             ))}
           </div>
 
-          {!hasData &&
+          {loadError && (
+            <div className="mt-4 rounded-xl border border-status-red/30 bg-tint-red px-4 py-4">
+              <p className="text-sm font-bold text-status-red">
+                {loadError.code === 'EMAIL_NOT_VERIFIED'
+                  ? 'Email verification required'
+                  : loadError.status === 403
+                    ? 'Reports need a manager session'
+                    : loadError.status === 401
+                      ? 'Session expired'
+                      : 'Couldn’t load Reports'}
+              </p>
+              <p className="mt-1 text-13 text-status-red/90">
+                {loadError.code === 'EMAIL_NOT_VERIFIED'
+                  ? 'Your boss account needs a verified email before reports open — check your inbox for the 6-digit code or head to Verify email.'
+                  : loadError.status === 403
+                    ? "Your current role can't read sales reports — sign in or switch to a Manager or Admin session."
+                    : loadError.status === 401
+                      ? 'Clock in again to refresh the reports data.'
+                      : (loadError.message || 'The reports service did not respond.')}
+              </p>
+              <div className="mt-3">
+                <Button variant="outline" size="sm" onClick={() => setTick((t) => t + 1)}>Retry</Button>
+              </div>
+            </div>
+          )}
+
+          {!hasData && !loadError &&
           <div className="mt-4">
               <EmptyState
             title="No sales in this period"

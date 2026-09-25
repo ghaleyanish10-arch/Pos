@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -28,17 +29,26 @@ func (h *PayrollHandler) SetRate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "rate must be a positive number"})
 		return
 	}
+	if !validUUID(c.Param("id")) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid staff member id"})
+		return
+	}
 	if err := h.repo.SetHourlyRate(c.Request.Context(), c.Param("id"), req.Rate); err != nil {
+		if errors.Is(err, repo.ErrStaffNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "staff member not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save rate"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "hourly rate updated"})
 }
 
-// Rates lists staff with their hourly rates.
+// Rates lists staff with their hourly rates, scoped to the caller's own
+// branch from the JWT (Corporate Admin with no branch sees all — a deliberate
+// boss-level view, same rule as ListUsers). A ?branch_id= query is ignored.
 func (h *PayrollHandler) Rates(c *gin.Context) {
-	branchID := c.Query("branch_id")
-	out, err := h.repo.ListRates(c.Request.Context(), branchID)
+	out, err := h.repo.ListRates(c.Request.Context(), branchIDFromCtx(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list rates"})
 		return
@@ -69,8 +79,7 @@ func (h *PayrollHandler) CreatePeriod(c *gin.Context) {
 }
 
 func (h *PayrollHandler) ListPeriods(c *gin.Context) {
-	branchID := c.Query("branch_id")
-	out, err := h.repo.ListPeriods(c.Request.Context(), branchID)
+	out, err := h.repo.ListPeriods(c.Request.Context(), branchIDFromCtx(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list payroll periods"})
 		return

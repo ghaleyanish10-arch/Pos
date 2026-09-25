@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -10,13 +11,33 @@ import (
 	"github.com/mesa-os/backend/internal/repo"
 )
 
-// allowedStaffRoles are the exhaustively supported RBAC roles. A staff member
-// is exactly one of these — never a self-invented label.
-var allowedStaffRoles = map[string]bool{
-	"Cashier":          true,
-	"Store Manager":    true,
+// rbacRoles are the four privileged roles that gate route access via
+// RequireRole on JWTs. New accounts — which can include PIN-created logins —
+// may only be minted with one of these; a role a person cannot actually log
+// in under must never be stamped on a fresh users row.
+var rbacRoles = map[string]bool{
+	"Cashier":           true,
+	"Store Manager":     true,
 	"Inventory Auditor": true,
-	"Corporate Admin":  true,
+	"Corporate Admin":   true,
+}
+
+// allowedStaffRoles are the supported roster roles. The four privileged roles
+// gate terminal access via the users table (RequireRole on JWTs); the rest are
+// legacy/display roles the roster and shifts screens already use — real rows
+// exist with these labels, so PROFILE UPDATES must never reject them. Creation
+// stays strict (rbacRoles); only editing an existing legacy profile may keep a
+// legacy label.
+var allowedStaffRoles = map[string]bool{
+	"Cashier":           true,
+	"Store Manager":     true,
+	"Inventory Auditor": true,
+	"Corporate Admin":   true,
+	"Service":           true,
+	"Waiter":            true,
+	"Kitchen":           true,
+	"Bar":               true,
+	"Host":              true,
 }
 
 type StaffHandler struct {
@@ -29,6 +50,16 @@ func NewStaffHandler(r *repo.StaffRepo) *StaffHandler {
 	return &StaffHandler{repo: r}
 }
 
+// branchIDFromCtx returns the caller's branch from the validated JWT (set by
+// AuthMiddleware), never from a client-controlled query string. An account
+// with no branch yields "" so the repos scope to branch-less rows instead of
+// the whole table.
+func branchIDFromCtx(c *gin.Context) string {
+	branchID, _ := c.Get("branch_id")
+	b, _ := branchID.(string)
+	return b
+}
+
 // SetAuthDeps injects the services needed to create PIN-login users from the
 // Team screen. Optional: when not set, the legacy staff_members-only flow runs.
 func (h *StaffHandler) SetAuthDeps(svc *auth.Service, userRepo *repo.UserRepo) {
@@ -37,7 +68,7 @@ func (h *StaffHandler) SetAuthDeps(svc *auth.Service, userRepo *repo.UserRepo) {
 }
 
 func (h *StaffHandler) List(c *gin.Context) {
-	branchID := c.Query("branch_id")
+	branchID := branchIDFromCtx(c)
 
 	members, err := h.repo.List(c.Request.Context(), branchID)
 	if err != nil {
@@ -45,6 +76,60 @@ func (h *StaffHandler) List(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": members})
+}
+
+// ListDeactivated is the explicit "show deactivated staff" view the Team
+// screen's deactivated section reads from. Everything else (Team roster,
+// payroll rates) must use the active-only List.
+func (h *StaffHandler) ListDeactivated(c *gin.Context) {
+	branchID := branchIDFromCtx(c)
+
+	members, err := h.repo.ListDeactivated(c.Request.Context(), branchID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": members})
+}
+
+// Deactivate stamps deactivated_at on a staff member: they vanish from the
+// active roster and the payroll rate list, but their row (shift/payroll
+// history) survives. Router-gated Store-Manager-and-up.
+func (h *StaffHandler) Deactivate(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if !validUUID(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid staff member id"})
+		return
+	}
+	if err := h.repo.Deactivate(ctx, id); err != nil {
+		if errors.Is(err, repo.ErrStaffNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "staff member deactivated"})
+}
+
+// Reactivate clears deactivated_at. Router-gated Store-Manager-and-up.
+func (h *StaffHandler) Reactivate(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if !validUUID(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid staff member id"})
+		return
+	}
+	if err := h.repo.Reactivate(ctx, id); err != nil {
+		if errors.Is(err, repo.ErrStaffNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "staff member reactivated"})
 }
 
 func (h *StaffHandler) Create(c *gin.Context) {
@@ -59,16 +144,12 @@ func (h *StaffHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name and role are required"})
 		return
 	}
-	if !allowedStaffRoles[req.Role] {
+	if !rbacRoles[req.Role] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported role — pick Cashier, Store Manager, Inventory Auditor or Corporate Admin"})
 		return
 	}
 
-	branchID, _ := c.Get("branch_id")
-	branch := ""
-	if b, ok := branchID.(string); ok {
-		branch = b
-	}
+	branch := branchIDFromCtx(c)
 
 	// A staff PIN upgrades the row into a real users account so the person can
 	// clock in at a terminal. Without a PIN we keep the legacy staff_members
@@ -140,6 +221,10 @@ func (h *StaffHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.repo.Update(ctx, c.Param("id"), req.Name, req.Role); err != nil {
+		if errors.Is(err, repo.ErrStaffNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -156,7 +241,7 @@ func (h *StaffHandler) Update(c *gin.Context) {
 }
 
 func (h *StaffHandler) ListShifts(c *gin.Context) {
-	branchID := c.Query("branch_id")
+	branchID := branchIDFromCtx(c)
 
 	shifts, err := h.repo.ListShifts(c.Request.Context(), branchID)
 	if err != nil {

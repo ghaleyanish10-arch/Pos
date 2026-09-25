@@ -3,9 +3,24 @@ const TOKEN_KEY = 'mesa_token';
 const REFRESH_KEY = 'mesa_refresh_token';
 const USER_KEY = 'mesa_user';
 const DEVICE_KEY = 'mesa_device_id';
+const SESSION_NOTICE_KEY = 'mesa_session_notice';
 
 let accessToken = localStorage.getItem(TOKEN_KEY) || null;
 let refreshToken = localStorage.getItem(REFRESH_KEY) || null;
+
+// A persisted token without a persisted user is a half-dead session (token
+// expired, or the user payload lost/corrupt). RootRoute decides "logged in"
+// from the token while AppShell decides from the user payload — with partial
+// state one redirects to /dashboard and the other back to /, an infinite loop
+// behind a blank page. Normalize once at load: no user, no session. Every
+// legit flow sets both (establishSession/authorizeSession) or clears both.
+if (accessToken && !getApiUser()) {
+  accessToken = null;
+  refreshToken = null;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(USER_KEY);
+}
 // Single-flight guard so a burst of parallel 401s (menu, categories, tables,
 // settings all at once) triggers exactly one refresh, not one per caller.
 let refreshInFlight = null;
@@ -45,7 +60,10 @@ export function getApiUser() {
 }
 
 export function hasApiSession() {
-  return Boolean(accessToken);
+  // A session is only real when BOTH halves exist: the token and its user
+  // payload. Token-only means expired/partial — treated as logged out so every
+  // guard (RootRoute, AppShell, RoleProvider) agrees on one answer.
+  return Boolean(accessToken) && Boolean(getApiUser());
 }
 
 // Persist a clock-in session and tell every provider to re-read it.
@@ -53,6 +71,7 @@ export function establishSession(token, user) {
   accessToken = token;
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
+  localStorage.removeItem(SESSION_NOTICE_KEY);
   window.dispatchEvent(new Event('mesa-session'));
 }
 
@@ -86,23 +105,61 @@ export async function authorizeSession(res) {
   return hydrated;
 }
 
-// Drop the session and flip the shell back to the clock-in screen.
+// Drop the session and flip the shell back to the clock-in screen. The
+// refresh token dies with the session: keeping it after logout would leave a
+// dead token parked in localStorage, and the next session's first 401 would
+// waste a refresh attempt against an expired token (or, worse, succeed and
+// resurrect a session that was meant to be gone).
 export function clearApiSession() {
   accessToken = null;
+  refreshToken = null;
   setElevationToken(null);
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem(USER_KEY);
   window.dispatchEvent(new Event('mesa-session'));
 }
 
-// A 401 is only worth a token-refresh-and-retry when the failing call is a
-// NORMAL request. If the request is part of the step-up elevation flow it
-// already carries an in-memory elevation token (set by withElevation via
-// setElevationToken); retrying it after a plain refresh won't restore that
-// single-use token, and the elevation endpoint would just 401 again — so skip
-// the refresh leg and surface the 401 to the elevation prompt instead.
-function codeHasElevation() {
-  return Boolean(elevationToken);
+// Exchange the stored refresh token for a fresh access/refresh pair. Built on
+// the refreshInFlight single-flight guard so a burst of parallel 401s shares
+// one refresh instead of hammering the endpoint. The caller inspects the
+// returned Response status (200/204 -> retry with the new access token, 401 ->
+// refresh token itself is dead).
+async function refreshAccessTokenOnce() {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Device-Id': getDeviceId()
+        },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const access = data?.tokens?.access_token;
+        const nextRefresh = data?.tokens?.refresh_token;
+        if (access) {
+          accessToken = access;
+          localStorage.setItem(TOKEN_KEY, access);
+        }
+        if (nextRefresh) {
+          refreshToken = nextRefresh;
+          localStorage.setItem(REFRESH_KEY, nextRefresh);
+        }
+      }
+      return res;
+    } finally {
+      // Always release the flight slot. If the refresh fetch itself throws
+      // (dead network, bad JSON), waiting callers share the rejection and the
+      // NEXT 401 must be able to start a fresh refresh — never a reused
+      // rejected promise that would wedge the session until reload.
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
 }
 
 async function request(path, opts) {
@@ -111,13 +168,26 @@ async function request(path, opts) {
     'X-Device-Id': getDeviceId()
   };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  if (elevationToken) headers['X-Elevation-Token'] = elevationToken;
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body ? JSON.stringify(opts.body) : undefined
-  });
-  if (res.status === 401 && !(opts.skipRefresh) && !codeHasElevation(opts)) {
+  // The elevation token is strictly single-use. Snapshot whether THIS request
+  // carries it: (a) so the header is attached exactly when a step-up action is
+  // actually in flight, and (b) so a 401 from the elevation retry is surfaced
+  // to the PIN prompt instead of being "refreshed" away. The token is dropped
+  // the moment the request lands — a lingering one would otherwise stamp every
+  // unrelated request with the header and disable the refresh leg for all of
+  // them via a stale codeHasElevation().
+  const carriedElevation = Boolean(elevationToken);
+  if (carriedElevation) headers['X-Elevation-Token'] = elevationToken;
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+  } finally {
+    if (carriedElevation) setElevationToken(null);
+  }
+  if (res.status === 401 && !(opts.skipRefresh) && !carriedElevation) {
     const refreshed = await refreshAccessTokenOnce();
     if (refreshed && (refreshed.status === 200 || refreshed.status === 204)) {
       // retry the original request with the fresh access token
@@ -132,10 +202,12 @@ async function request(path, opts) {
       res = retry;
     } else if (refreshed?.status === 401) {
       // refresh token itself is dead — session truly expired
-      err = new Error('session expired');
-      throw err;
+      const dead = new Error('session expired');
+      dead.status = 401;
+      localStorage.setItem(SESSION_NOTICE_KEY, 'expired');
+      window.dispatchEvent(new Event('mesa-session-expired'));
+      throw dead;
     }
-    refreshInFlight = null;
   }
   if (!res.ok) {
     let detail = '';

@@ -66,8 +66,9 @@ function RefundsBoard() {
           setApproval(data.filter((g) => g.status === 'Approved').map(fromApi));
           setResolved(data.filter((g) => g.status !== 'Requested' && g.status !== 'Approved').map(fromApi));
         }
-      } catch {
+      } catch (err) {
         /* keep static refunds as fallback */
+        console.error('Refunds load failed:', err);
       }
     })();
     return () => { cancelled = true; };

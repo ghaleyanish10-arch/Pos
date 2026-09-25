@@ -2,10 +2,16 @@ package repo
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mesa-os/backend/internal/model"
 )
+
+// ErrInsufficientStock is returned when a waste write-off or adjustment would
+// take stock below zero — the write-off is rejected rather than silently
+// clamped so the waste log never claims more units than actually existed.
+var ErrInsufficientStock = errors.New("cannot write off more than current stock")
 
 type InventoryRepo struct {
 	db *pgxpool.Pool
@@ -111,25 +117,34 @@ func (r *InventoryRepo) RecordWaste(ctx context.Context, w *model.WasteEntry, un
 	}
 	defer tx.Rollback(ctx)
 
+	// Read the item under a lock so the write-off can never exceed actual
+	// stock: a waste log claiming 10 units while stock only holds 4 would
+	// otherwise record a lie (and silently clamp the stock to 0). The locked
+	// read is also the unit cost snapshot for the write-off value.
+	var stock, itemUnitCost float64
+	if err := tx.QueryRow(ctx,
+		`SELECT stock, COALESCE(unit_cost, 0) FROM inventory_items WHERE id = $1 FOR UPDATE`, w.ItemID,
+	).Scan(&stock, &itemUnitCost); err != nil {
+		return err
+	}
+	if w.Qty > stock {
+		return ErrInsufficientStock
+	}
+
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO waste_log (item_id, qty, reason, cost, branch_id, created_by)
-		SELECT id, $2, $3, ROUND($2 * unit_cost, 2), branch_id, $4 FROM inventory_items WHERE id = $1`,
-		w.ItemID, w.Qty, w.Reason, w.CreatedBy,
+		SELECT id, $2, $3, ROUND($2 * $4, 2), branch_id, $5 FROM inventory_items WHERE id = $1`,
+		w.ItemID, w.Qty, w.Reason, itemUnitCost, w.CreatedBy,
 	); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE inventory_items SET stock = GREATEST(0, stock - $2) WHERE id = $1`,
+		`UPDATE inventory_items SET stock = stock - $2 WHERE id = $1`,
 		w.ItemID, w.Qty,
 	); err != nil {
 		return err
 	}
-	if err := tx.QueryRow(ctx,
-		`SELECT COALESCE(unit_cost, 0) FROM inventory_items WHERE id = $1`, w.ItemID,
-	).Scan(&unitCost); err != nil {
-		return err
-	}
-	w.Cost = unitCost * w.Qty
+	w.Cost = itemUnitCost * w.Qty
 	return tx.Commit(ctx)
 }
 
@@ -155,11 +170,32 @@ func (r *InventoryRepo) WasteLog(ctx context.Context, limit int) ([]model.WasteE
 }
 
 func (r *InventoryRepo) AdjustStock(ctx context.Context, id string, delta float64) error {
-	_, err := r.db.Exec(ctx,
-		`UPDATE inventory_items SET stock = GREATEST(0, stock + $1), restocked_at = CASE WHEN $1 > 0 THEN now() ELSE restocked_at END WHERE id = $2`,
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Never push stock negative. A negative adjustment that would exceed the
+	// current stock is rejected instead of silently clamping to 0, so the UI
+	// cannot claim "stock adjusted" while reality differs from the number shown.
+	var stock float64
+	if err := tx.QueryRow(ctx,
+		`SELECT stock FROM inventory_items WHERE id = $1 FOR UPDATE`, id).Scan(&stock); err != nil {
+		return err
+	}
+	if stock+delta < 0 {
+		return ErrInsufficientStock
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE inventory_items SET stock = stock + $1, restocked_at = CASE WHEN $1 > 0 THEN now() ELSE restocked_at END WHERE id = $2`,
 		delta, id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *InventoryRepo) ReorderSuggestions(ctx context.Context, branchID string) ([]model.ReorderSuggestion, error) {

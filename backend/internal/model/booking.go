@@ -18,6 +18,21 @@ type FloorTable struct {
 	OrderID    *string `json:"order_id,omitempty"`
 	OrderTotal float64 `json:"order_total,omitempty"`
 	ItemCount  int     `json:"item_count,omitempty"`
+
+	// Manual flags behind the derived states. bill_dropped / needs_attention
+	// are always present (false when unset) so clients can render the flag
+	// actions reliably; attention_note is optional.
+	BillDropped    bool   `json:"bill_dropped"`
+	NeedsAttention bool   `json:"needs_attention"`
+	AttentionNote  string `json:"attention_note,omitempty"`
+
+	// Merged-group info: when OTHER tables have been merged into this one,
+	// merged_with lists their names and merged_seats the extra seats they
+	// bring, so the floor can render ONE combined card ("T8 + T9") without a
+	// second round-trip. Empty when the table is not the head of a merged
+	// group (child rows are excluded from the listing entirely).
+	MergedWith  []string `json:"merged_with,omitempty"`
+	MergedSeats int      `json:"merged_seats,omitempty"`
 }
 
 type Reservation struct {

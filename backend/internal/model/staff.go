@@ -1,10 +1,13 @@
 package model
 
+import "time"
+
 type StaffMember struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Role     string  `json:"role"`
-	BranchID *string `json:"branch_id"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Role          string     `json:"role"`
+	BranchID      *string    `json:"branch_id"`
+	DeactivatedAt *time.Time `json:"deactivated_at,omitempty"`
 }
 
 type Shift struct {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -218,6 +219,142 @@ func (h *OrderHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, order)
+}
+
+// Transfer moves an open order's whole tab to another floor table. The
+// target is accepted as a table name ("T4") or its UUID; both resolve to the
+// same floor row. The anchor order only names the SOURCE table — every open
+// order on it moves, so the source always ends with no open order and derives
+// Vacant. Guards: the order must be OPEN and seated at a table; the target
+// must exist in the SAME branch and must NOT host any open order of its own —
+// merging two parties into one tab is a MERGE (see Merge), not a transfer.
+func (h *OrderHandler) Transfer(c *gin.Context) {
+	var req model.TransferOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tableID := strings.TrimSpace(req.TableID)
+	if tableID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "table_id is required"})
+		return
+	}
+	if !tableUUIDRe.MatchString(tableID) {
+		resolved, err := h.repo.ResolveTableID(c.Request.Context(), tableID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "table not found"})
+			return
+		}
+		tableID = resolved
+	}
+	if !validUUID(tableID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "table_id must be a table name or UUID"})
+		return
+	}
+
+	ordersMoved, targetName, err := h.repo.TransferTable(c.Request.Context(), c.Param("id"), tableID)
+	if err != nil {
+		switch {
+		case errors.Is(err, repo.ErrOrderNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrTargetTableNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrSameTable):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrCrossBranchTransfer):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrOrderNotSeated):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrOrderNotOpen):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrTargetTableOccupied):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error() + " — close it or use a merge instead"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "order transferred",
+		"order_id":     c.Param("id"),
+		"orders_moved": ordersMoved,
+		"table_id":     tableID,
+		"table_name":   targetName,
+	})
+}
+
+// Merge folds an occupied source table's open check into the target table
+// (c.Param("id")) — the two parties become ONE combined check on ONE combined
+// floor card. Unlike a transfer (which requires a VACANT target), a merge
+// lands ON an occupied table: the source order's items and kitchen tickets
+// move onto the target's open check, the source order closes as 'merged', and
+// the source table row points at the target via merged_into so the floor draws
+// one spanning card ("T8 + T9"). The target may also be vacant, in which case
+// the combined check is created there. Guards: both tables must exist in the
+// same branch, neither may already be part of a merge, and the source must
+// hold exactly one open order to fold.
+func (h *OrderHandler) Merge(c *gin.Context) {
+	var req model.MergeTablesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	targetTableID := strings.TrimSpace(c.Param("id"))
+	sourceTableID := strings.TrimSpace(req.SourceTableID)
+	if sourceTableID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source_table_id is required"})
+		return
+	}
+	if !validUUID(targetTableID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "target table id is invalid"})
+		return
+	}
+	if !tableUUIDRe.MatchString(sourceTableID) {
+		resolved, err := h.repo.ResolveTableID(c.Request.Context(), sourceTableID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "source table not found"})
+			return
+		}
+		sourceTableID = resolved
+	}
+	if !validUUID(sourceTableID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source_table_id must be a table name or UUID"})
+		return
+	}
+
+	orderID, itemsMoved, targetName, sourceName, err := h.repo.MergeTables(c.Request.Context(), targetTableID, sourceTableID)
+	if err != nil {
+		switch {
+		case errors.Is(err, repo.ErrTargetTableNotFound), errors.Is(err, repo.ErrSourceTableNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrMergeSameTable):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrCrossBranchTransfer):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrSourceNotOccupied):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrMultipleOpenOrders):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		case errors.Is(err, repo.ErrAlreadyMerged):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":           "tables merged",
+		"target_table_id":   targetTableID,
+		"target_table_name": targetName,
+		"source_table_id":   sourceTableID,
+		"source_table_name": sourceName,
+		"order_id":          orderID,
+		"items_moved":       itemsMoved,
+	})
 }
 
 func (h *OrderHandler) Update(c *gin.Context) {

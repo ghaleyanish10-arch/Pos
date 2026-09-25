@@ -16,16 +16,26 @@ func NewPayrollRepo(db *pgxpool.Pool) *PayrollRepo {
 	return &PayrollRepo{db: db}
 }
 
-// SetHourlyRate stores a staff member's hourly rate.
+// SetHourlyRate stores a staff member's hourly rate. A nonexistent staff id
+// is an error (ErrStaffNotFound), never a silent 0-row no-op — the frontend
+// relies on that 404 to surface "this member was never actually saved".
 func (r *PayrollRepo) SetHourlyRate(ctx context.Context, staffID string, rate float64) error {
-	_, err := r.db.Exec(ctx,
+	tag, err := r.db.Exec(ctx,
 		`UPDATE staff_members SET hourly_rate = $2 WHERE id = $1`, staffID, rate)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrStaffNotFound
+	}
+	return nil
 }
 
-// ListRates returns every staff member with their rate (unfilled = 0).
+// ListRates returns every ACTIVE staff member with their rate (unfilled = 0).
+// Deactivated members never appear on the payroll rate list — deactivation is
+// how a manager removes someone from payroll without deleting their history.
 func (r *PayrollRepo) ListRates(ctx context.Context, branchID string) ([]model.PayrollLine, error) {
-	query := `SELECT id::text, name, COALESCE(hourly_rate, 0) FROM staff_members WHERE 1=1`
+	query := `SELECT id::text, name, COALESCE(hourly_rate, 0) FROM staff_members WHERE deactivated_at IS NULL`
 	args := []interface{}{}
 	if branchID != "" {
 		query += ` AND branch_id = $1`
@@ -71,7 +81,7 @@ func (r *PayrollRepo) CreatePeriod(ctx context.Context, p *model.PayrollPeriod, 
 	for _, l := range lines {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO payroll_line_items (period_id, staff_id, staff_name, hours, hourly_rate, amount)
-			 VALUES ($1, $2, $3, $4, $5, $4 * $5)`,
+			 VALUES ($1, $2, $3, $4, $5, $4::numeric * $5::numeric)`,
 			p.ID, l.StaffID, l.StaffName, l.Hours, l.HourlyRate,
 		); err != nil {
 			return err

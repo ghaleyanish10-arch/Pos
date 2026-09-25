@@ -47,15 +47,36 @@ func (r *ElevationRepo) LoadPIN(ctx context.Context, userID string) (*PINStatus,
 	return &s, nil
 }
 
+// LoadPINByEmail is the email-keyed twin of LoadPIN, used by the terminal
+// enable flow when a manager identifies themselves by account email instead of
+// picking a name off the roster. Same contract: pgx.ErrNoRows when unknown.
+func (r *ElevationRepo) LoadPINByEmail(ctx context.Context, email string) (*PINStatus, error) {
+	var s PINStatus
+	err := r.db.QueryRow(ctx,
+		`SELECT id::text, name, email, role, COALESCE(branch_id::text, ''), pin_hash, pin_failed_attempts, pin_locked_until
+		 FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
+		email,
+	).Scan(&s.UserID, &s.Name, &s.Email, &s.Role, &s.BranchID, &s.PINHash, &s.FailedAttempts, &s.LockedUntil)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // ListRoster returns the staff eligible to clock in at a branch on the
-// shared terminal: every active account at that branch, plus accounts
-// without a branch (e.g. a floating Corporate Admin). All roles appear —
-// Kitchen and Cashier included, not just managers. It returns RosterMember,
+// shared terminal: every active account of THAT branch, plus branch-less
+// accounts (e.g. a floating Corporate Admin). An empty/absent branch means
+// "nothing," NEVER "everyone" — the caller must have already resolved a real
+// branch server-side (an approved device's bound branch), so this function
+// never silently widens into a cross-tenant dump. It returns RosterMember,
 // a bare surface with no secret material: no PIN hash, no lockout state, no
 // attempt counters, no has_pin flag.
 func (r *ElevationRepo) ListRoster(ctx context.Context, branchID string) ([]model.RosterMember, error) {
+	if branchID == "" {
+		return nil, nil
+	}
 	query := `SELECT id::text, name, role, COALESCE(branch_id::text, '')
-		 FROM users WHERE deleted_at IS NULL AND ($1 = '' OR branch_id = $1::uuid OR branch_id IS NULL)
+		 FROM users WHERE deleted_at IS NULL AND (branch_id = $1::uuid OR branch_id IS NULL)
 		 ORDER BY name`
 	rows, err := r.db.Query(ctx, query, branchID)
 	if err != nil {
@@ -79,15 +100,24 @@ func (r *ElevationRepo) ListRoster(ctx context.Context, branchID string) ([]mode
 	return users, nil
 }
 
-// ListPINHolders returns the users whose PIN can authorize an elevation:
-// managers and admins that actually have a PIN set. Safe to expose to any
-// authenticated terminal user — it carries no secret material.
-func (r *ElevationRepo) ListPINHolders(ctx context.Context) ([]model.User, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT id::text, name, email, role FROM users
+// ListPINHolders returns the users whose PIN can authorize an elevation for a
+// given branch: managers and admins of THAT branch that actually have a PIN
+// set. Safe to expose to any authenticated terminal user — it carries no
+// secret material, and cross-branch staff never appear.
+func (r *ElevationRepo) ListPINHolders(ctx context.Context, branchID string) ([]model.User, error) {
+	query := `SELECT id::text, name, email, role FROM users
 		 WHERE deleted_at IS NULL AND pin_hash IS NOT NULL
-		   AND role IN ('Store Manager', 'Corporate Admin')
-		 ORDER BY name`)
+		   AND role IN ('Store Manager', 'Corporate Admin')`
+	args := []interface{}{}
+	if branchID == "" {
+		query += ` AND branch_id IS NULL`
+	} else {
+		query += ` AND branch_id = $1::uuid`
+		args = append(args, branchID)
+	}
+	query += ` ORDER BY name`
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +134,21 @@ func (r *ElevationRepo) ListPINHolders(ctx context.Context) ([]model.User, error
 	return users, nil
 }
 
-// ListUsers returns all active accounts (admin-only surface).
-func (r *ElevationRepo) ListUsers(ctx context.Context) ([]model.User, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT id::text, name, email, role, pin_hash IS NOT NULL FROM users
-		 WHERE deleted_at IS NULL ORDER BY name`)
+// ListUsers returns the accounts a boss sees on the Staff → Staff PINs screen:
+// every active account of the SAME branch only. A floating account (no branch)
+// sees its floating siblings alone — never every branch at once.
+func (r *ElevationRepo) ListUsers(ctx context.Context, branchID string) ([]model.User, error) {
+	query := `SELECT id::text, name, email, role, pin_hash IS NOT NULL FROM users`
+	args := []interface{}{}
+	if branchID == "" {
+		query += ` WHERE deleted_at IS NULL AND branch_id IS NULL`
+	} else {
+		query += ` WHERE deleted_at IS NULL AND branch_id = $1::uuid`
+		args = append(args, branchID)
+	}
+	query += ` ORDER BY name`
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -125,6 +165,50 @@ func (r *ElevationRepo) ListUsers(ctx context.Context) ([]model.User, error) {
 		users = append(users, u)
 	}
 	return users, nil
+}
+
+// DeleteAccount soft-deletes a staff account. Stamping deleted_at makes every
+// downstream query that filters on it (login, roster, PIN lists) drop the
+// row; the same update clears the PIN hash, lockout state and refresh token so
+// nothing of the account survives. The transaction also revokes dangling ties:
+// any approved-terminal "enabled by" link is nulled and pending single-use
+// elevation grants for the account are deleted. Returns pgx.ErrNoRows when the
+// account is already gone.
+func (r *ElevationRepo) DeleteAccount(ctx context.Context, userID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // rollback is a no-op after commit
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE users
+		 SET deleted_at = now(), pin_hash = NULL, pin_failed_attempts = 0,
+		     pin_locked_until = NULL, refresh_token = NULL
+		 WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	// Revoke the terminal-approval link (devices.enabled_by_user_id) and any
+	// single-use elevation tokens minted for this account.
+	if _, err := tx.Exec(ctx,
+		`UPDATE devices SET enabled_by_user_id = NULL WHERE enabled_by_user_id = $1`, userID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM elevation_tokens WHERE user_id = $1`, userID,
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // RegisterFailure increments the failed-attempt counter and returns the new

@@ -63,7 +63,7 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 	}
 
 	// Token signed with a different secret must also be rejected.
-	tokens, err := auth.GenerateTokenPair("u1", "a@b.c", "Cashier", "b1", "other-secret", 5*time.Minute, time.Hour)
+	tokens, err := auth.GenerateTokenPair("u1", "a@b.c", "Cashier", "b1", 0, "other-secret", 5*time.Minute, time.Hour)
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 
 func TestAuthMiddlewareValidToken(t *testing.T) {
 	r := setupAuthMiddleware("secret")
-	tokens, err := auth.GenerateTokenPair("user-1", "cashier@mesa.os", "Cashier", "branch-1", "secret", 5*time.Minute, time.Hour)
+	tokens, err := auth.GenerateTokenPair("user-1", "cashier@mesa.os", "Cashier", "branch-1", 0, "secret", 5*time.Minute, time.Hour)
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}

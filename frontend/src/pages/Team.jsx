@@ -78,19 +78,27 @@ export function Team() {
   const [staffDrawer, setStaffDrawer] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
   const [form, setForm] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoadState('loading');
     (async () => {
       try {
-        const [staffRes, shiftsRes] = await Promise.all([
+        const [staffRes, shiftsRes, deactivatedRes] = await Promise.all([
           api('/staff'),
-          api('/shifts')
+          api('/shifts'),
+          api('/staff/deactivated')
         ]);
         if (cancelled) return;
         const members = staffRes?.data || [];
-        if (members.length > 0) setTeam(members.map(toStaffMember));
+        const deactivated = deactivatedRes?.data || [];
+        if (members.length + deactivated.length > 0) {
+          setTeam([
+            ...members.map(toStaffMember),
+            ...deactivated.map((m) => ({ ...toStaffMember(m), active: false }))
+          ]);
+        }
         const shiftsList = shiftsRes?.data || [];
         if (staffRes && Array.isArray(shiftsList)) setSchedule(shiftsList.map(toShift));
         setLoadState('ready');
@@ -139,6 +147,10 @@ export function Team() {
   };
 
   const openEditStaff = (person) => {
+    if (submitting) {
+      toast('Still saving — wait a moment before editing', { tone: 'amber' });
+      return;
+    }
     setEditingStaff(person);
     setForm({ name: person.name, role: person.role, email: person.email, phone: person.phone, station: person.station, pin: '', rate: person.rate ?? '' });
     setStaffDrawer(true);
@@ -147,7 +159,7 @@ export function Team() {
   const nextStaffId = 'MST-' +
     (Math.max(...team.map((p) => parseInt(String(p.id).split('-')[1], 10) || 0)) + 1);
 
-  const saveStaff = () => {
+  const saveStaff = async () => {
     if (!form?.name.trim()) {
       toast('Enter a staff name', { tone: 'red' });
       return;
@@ -161,51 +173,109 @@ export function Team() {
     if (pin) payload.pin = pin;
     const rateNum = Number(form.rate);
     const rate = form.rate !== '' && !Number.isNaN(rateNum) && rateNum >= 0 ? rateNum : null;
+
     if (editingStaff) {
+      const before = editingStaff;
+      // Optimistic local update keeps the roster snappy, but we roll it back
+      // if the server rejects the change — never leave a phantom edit in place.
       setTeam((prev) =>
-        prev.map((p) => (p.name === editingStaff.name ? { ...p, ...form } : p)));
-      toast(`${form.name} updated`, { tone: 'green' });
-      if (editingStaff.id) {
-        api(`/staff/${editingStaff.id}`, { method: 'PUT', body: { name: payload.name, role: payload.role } }).catch(() => {});
-        // Hourly rate rides its own payroll endpoint (manager-gated server-side).
-        if (rate !== null) {
-          api(`/staff/${editingStaff.id}/rate`, { method: 'PUT', body: { rate } }).catch(() => {});
+        prev.map((p) => (p.id === editingStaff.id ? { ...p, ...form } : p)));
+      setDetail((d) => (d && d.id === editingStaff.id ? { ...d, ...form } : d));
+      setSubmitting(true);
+      try {
+        // Both calls run in parallel; allSettled lets us report granularly
+        // instead of pretending a rate-only failure was a full save.
+        const settled = await Promise.allSettled([
+          api(`/staff/${editingStaff.id}`, { method: 'PUT', body: { name: payload.name, role: payload.role } }),
+          rate !== null
+            ? api(`/staff/${editingStaff.id}/rate`, { method: 'PUT', body: { rate } })
+            : Promise.resolve(null)
+        ]);
+        const [rosterRes, rateRes] = settled;
+        const rosterOk = rosterRes.status === 'fulfilled';
+        const rateOk = rateRes.status === 'fulfilled';
+        if (rosterOk && rateOk) {
+          toast(`${form.name} updated`, { tone: 'green' });
+        } else if (!rosterOk) {
+          setTeam((prev) => prev.map((p) => (p.id === before.id ? before : p)));
+          console.error('staff update failed:', rosterRes.reason);
+          toast(`Couldn't update ${before.name}: ${rosterRes.reason?.message || 'server error'}`, { tone: 'red' });
+        } else {
+          console.error('rate update failed:', rateRes.reason);
+          toast(`${form.name} updated, but the hourly rate wasn't saved: ${rateRes.reason?.message || 'server error'}`, { tone: 'red' });
         }
+      } finally {
+        setSubmitting(false);
       }
-      setDetail((d) => (d && d.name === editingStaff.name ? { ...d, ...form } : d));
-    } else {
-      const created = { ...form, id: nextStaffId, joined: 'Sep 2026' };
-      setTeam((prev) => [...prev, created]);
-      api('/staff', { method: 'POST', body: payload })
-        .then((res) => {
-          toast((res?.message) || `${form.name} added to the team`, { tone: 'green' });
-          if (res?.member?.id) {
-            setTeam((prev) => prev.map((p) => (p.id === created.id ? { ...p, id: res.member.id } : p)));
-          }
-        })
-        .catch(() => {
-          toast(`${form.name} added to the team`, { tone: 'green' });
-        });
+      setStaffDrawer(false);
+      setEditingStaff(null);
+      return;
     }
-    setStaffDrawer(false);
-    setEditingStaff(null);
+
+    // New staff: the row is only real once POST /staff returns a backend id.
+    // Mark the local entry "pending" so it cannot be edited/deactivated under
+    // a client-only fake id; on failure the entry is removed and the drawer
+    // stays open with the real error instead of a fake success toast.
+    setSubmitting(true);
+    const created = { ...form, id: nextStaffId, joined: 'Sep 2026', pending: true };
+    setTeam((prev) => [...prev, created]);
+    try {
+      const res = await api('/staff', { method: 'POST', body: payload });
+      if (res?.member?.id) {
+        setTeam((prev) => prev.map((p) => (p.id === created.id ? { ...p, id: res.member.id, pending: false } : p)));
+      } else {
+        setTeam((prev) => prev.map((p) => (p.id === created.id ? { ...p, pending: false } : p)));
+      }
+      setStaffDrawer(false);
+      setEditingStaff(null);
+      toast(res?.message || `${form.name} added to the team`, { tone: 'green' });
+    } catch (e) {
+      setTeam((prev) => prev.filter((p) => p.id !== created.id));
+      console.error('staff create failed:', e);
+      toast(`Couldn't add ${form.name}: ${e.message || 'server error'}`, { tone: 'red' });
+      // drawer stays open so the form is still there to retry
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const deactivate = (person) => {
+  const deactivate = async (person) => {
     const removedShifts = schedule.filter((s) => s.staff === person.name).length;
+    const prevTeam = team;
+    const prevSchedule = schedule;
+    // Optimistic, but rolled back if the server says no — deactivation is a
+    // backend state now, not a local toggle that evaporates on refresh.
     setTeam((prev) =>
-      prev.map((p) => (p.name === person.name ? { ...p, active: false } : p)));
+      prev.map((p) => (p.id === person.id ? { ...p, active: false } : p)));
     setSchedule((prev) => prev.filter((s) => s.staff !== person.name));
-    if (message?.name === person.name) setMessage(null);
-    if (detail?.name === person.name) setDetail((d) => ({ ...d, active: false }));
-    toast(`${person.name} deactivated · ${removedShifts} shift${removedShifts === 1 ? '' : 's'} removed`, { tone: 'red' });
+    if (message?.id === person.id) setMessage(null);
+    if (detail?.id === person.id) setDetail((d) => ({ ...d, active: false }));
+    try {
+      await api(`/staff/${person.id}/deactivate`, { method: 'PUT' });
+      toast(`${person.name} deactivated · ${removedShifts} shift${removedShifts === 1 ? '' : 's'} removed`, { tone: 'red' });
+    } catch (e) {
+      console.error('deactivate failed:', e);
+      setTeam(prevTeam);
+      setSchedule(prevSchedule);
+      if (detail?.id === person.id) setDetail((d) => ({ ...d, active: true }));
+      toast(`Couldn't deactivate ${person.name}: ${e.message || 'server error'}`, { tone: 'red' });
+    }
   };
 
-  const reactivate = (person) => {
+  const reactivate = async (person) => {
+    const prevTeam = team;
     setTeam((prev) =>
-      prev.map((p) => (p.name === person.name ? { ...p, active: true } : p)));
-    if (detail?.name === person.name) setDetail((d) => ({ ...d, active: true }));
-    toast(`${person.name} reactivated — reassign shifts`, { tone: 'green' });
+      prev.map((p) => (p.id === person.id ? { ...p, active: true } : p)));
+    if (detail?.id === person.id) setDetail((d) => ({ ...d, active: true }));
+    try {
+      await api(`/staff/${person.id}/reactivate`, { method: 'PUT' });
+      toast(`${person.name} reactivated — reassign shifts`, { tone: 'green' });
+    } catch (e) {
+      console.error('reactivate failed:', e);
+      setTeam(prevTeam);
+      if (detail?.id === person.id) setDetail((d) => ({ ...d, active: false }));
+      toast(`Couldn't reactivate ${person.name}: ${e.message || 'server error'}`, { tone: 'red' });
+    }
   };
 
   const shiftForm = (sel) => ({
@@ -246,7 +316,10 @@ export function Team() {
         undo: () => setSchedule(prev)
       });
       if (selected.shift.id) {
-        api(`/shifts/${selected.shift.id}`, { method: 'PUT', body: shiftBody }).catch(() => {});
+        api(`/shifts/${selected.shift.id}`, { method: 'PUT', body: shiftBody }).catch(() => {
+          setSchedule((list) => list.map((s) => (s === updated ? selected.shift : s)));
+          toast(`Couldn't save ${selected.staff}'s ${weekDays[selected.day]} shift — it wasn't persisted`, { tone: 'red' });
+        });
       }
     } else {
       const existing = schedule.find(
@@ -260,7 +333,10 @@ export function Team() {
           undo: () => setSchedule(prev)
         });
         if (existing.id) {
-          api(`/shifts/${existing.id}`, { method: 'PUT', body: shiftBody }).catch(() => {});
+          api(`/shifts/${existing.id}`, { method: 'PUT', body: shiftBody }).catch(() => {
+            setSchedule((list) => list.map((s) => (s === created ? existing : s)));
+            toast(`Couldn't replace ${selected.staff}'s ${weekDays[selected.day]} shift — it wasn't persisted`, { tone: 'red' });
+          });
         }
       } else {
         const created = { staff: selected.staff, role, day: selected.day, time };
@@ -277,7 +353,10 @@ export function Team() {
                   list.map((s) => (s === created ? { ...s, id: res.id, staff_id: staffId } : s)));
               }
             })
-            .catch(() => {});
+            .catch(() => {
+              setSchedule((list) => list.filter((s) => s !== created));
+              toast(`Couldn't add ${selected.staff}'s ${weekDays[selected.day]} shift — it wasn't saved`, { tone: 'red' });
+            });
         }
       }
     }
@@ -293,7 +372,10 @@ export function Team() {
       undo: () => setSchedule((list) => [...list, removed])
     });
     if (removed.id) {
-      api(`/shifts/${removed.id}`, { method: 'DELETE' }).catch(() => {});
+      api(`/shifts/${removed.id}`, { method: 'DELETE' }).catch(() => {
+        setSchedule((list) => (list.some((s) => s === removed) ? list : [...list, removed]));
+        toast(`Couldn't drop ${selected.staff}'s ${weekDays[selected.day]} shift — it's still on the schedule`, { tone: 'red' });
+      });
     }
     setSelected(null);
   };
@@ -315,7 +397,10 @@ export function Team() {
 
   // Clicking a staff member opens the full profile page (attendance history,
   // weekly stats, clock-ins). The ⋯ button keeps the quick-actions drawer.
+  // A pending (still-creating) member has only a client-side id — don't send
+  // the browser to a profile the backend has never heard of.
   const openProfile = (person) => {
+    if (person.pending) return;
     navigate(`/team/${person.id}`);
   };
 
@@ -888,11 +973,11 @@ export function Team() {
         subtitle={editingStaff ? `${editingStaff.id} · currently active` : `Next ID ${nextStaffId}`}
         footer={
         <>
-            <Button variant="outline" onClick={() => { setStaffDrawer(false); setEditingStaff(null); }}>
+            <Button variant="outline" onClick={() => { setStaffDrawer(false); setEditingStaff(null); }} disabled={submitting}>
               Cancel
             </Button>
-            <Button variant="dark" full onClick={saveStaff}>
-              {editingStaff ? 'Save changes' : 'Add staff'}
+            <Button variant="dark" full onClick={saveStaff} disabled={submitting}>
+              {submitting ? (editingStaff ? 'Saving…' : 'Adding…') : (editingStaff ? 'Save changes' : 'Add staff')}
             </Button>
           </>
         }>
@@ -924,6 +1009,8 @@ export function Team() {
                 className={inputClass}
                 value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                {!['Cashier', 'Store Manager', 'Inventory Auditor', 'Corporate Admin'].includes(form.role) &&
+                  <option>{form.role}</option>}
                 <option>Cashier</option>
                 <option>Store Manager</option>
                 <option>Inventory Auditor</option>

@@ -6,11 +6,11 @@ export function shortId(id) {
   return `#${id.slice(0, 5).toUpperCase()}`;
 }
 
-export function elapsedFrom(iso) {
+export function elapsedFrom(iso, nowMs) {
   if (!iso) return '0 min';
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '0 min';
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  const mins = Math.max(0, Math.round(((nowMs ?? Date.now()) - then) / 60000));
   return `${mins} min`;
 }
 
@@ -32,13 +32,13 @@ export const isOverSLA = (elapsed) => elapsedMinutes(elapsed) > SLA_MINUTES;
  * Pass null to pause. Returns the tick so components can use it as an effect dependency.
  */
 export function useElapsedClock(intervalMs = 30000) {
-  const [tick, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (intervalMs == null) return;
-    const id = setInterval(() => setTick((n) => n + 1), intervalMs);
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
-  return tick;
+  return now;
 }
 
 export function normalizeTicket(t) {

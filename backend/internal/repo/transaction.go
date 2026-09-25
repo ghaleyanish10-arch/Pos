@@ -2,10 +2,16 @@ package repo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mesa-os/backend/internal/model"
 )
+
+// ErrPaymentExceedsOrder is returned when a payment would push the confirmed
+// total paid on an order past its total — a double-click or duplicate submit.
+var ErrPaymentExceedsOrder = errors.New("payment exceeds order total")
 
 type TransactionRepo struct {
 	db *pgxpool.Pool
@@ -54,17 +60,43 @@ func (r *TransactionRepo) List(ctx context.Context, branchID string) ([]model.Tr
 	return txs, nil
 }
 
-func (r *TransactionRepo) Create(ctx context.Context, t *model.Transaction) error {
-	// A confirmed payment is the event that CLOSES the order it settles. We do
-	// this inside the same transaction as the receipt so the "paid" moment and
-	// the "check closed / table freed again" moment are atomic — a table that
-	// was Seated because of this order goes back to Vacant (derived from open
-	// orders) the instant the money lands, on every device, with no drift.
+// Create records a confirmed payment against an order (or, for a manual
+// register drop, against no order at all). It returns orderFullyPaid = true
+// only when this payment settled the LAST rupee of the order — the single
+// moment it is safe to auto-close the order and vacate the table. Split bills
+// send one Create per share against the same order_id; guest 1 of 3 paying in
+// returns false so the order stays open and the table keeps showing 'Seated'
+// until every share has landed. Both the overpayment guard and this decision
+// live under the order's FOR UPDATE row lock, so concurrent split payments
+// serialize: they neither over-charge nor double-close.
+func (r *TransactionRepo) Create(ctx context.Context, t *model.Transaction) (orderFullyPaid bool, err error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
+
+	// Never let an order be over-paid: a double-click or a duplicated request
+	// that lands twice must be rejected, not silently recorded as two charges.
+	// The order row is locked so concurrent payments serialize correctly.
+	var total float64
+	orderScoped := t.OrderID != nil && *t.OrderID != ""
+	if orderScoped {
+		var paid float64
+		err = tx.QueryRow(ctx,
+			`SELECT total FROM orders WHERE id = $1 FOR UPDATE`, *t.OrderID).Scan(&total)
+		if err != nil {
+			return false, fmt.Errorf("order lookup failed: %w", err)
+		}
+		if err := tx.QueryRow(ctx,
+			`SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE order_id = $1 AND status = 'Success'`, *t.OrderID).
+			Scan(&paid); err != nil {
+			return false, err
+		}
+		if t.Amount+paid > total {
+			return false, ErrPaymentExceedsOrder
+		}
+	}
 
 	err = tx.QueryRow(ctx,
 		`INSERT INTO transactions (order_id, ref, method, amount, status, bill_split_id, split_note, branch_id)
@@ -73,23 +105,27 @@ func (r *TransactionRepo) Create(ctx context.Context, t *model.Transaction) erro
 		t.OrderID, t.Ref, t.Method, t.Amount, t.SplitID, t.SplitNote, t.BranchID,
 	).Scan(&t.ID, &t.CreatedAt)
 	if err != nil {
-		return err
+		return false, err
 	}
 	t.Status = "Success"
 
-	if t.OrderID != nil && *t.OrderID != "" {
-		// The order this payment settles is finished — the check is paid, the
-		// kitchen keeps its ticket (KDS reads tickets, not order status), but
-		// the table/order are no longer open.
-		if _, err := tx.Exec(ctx,
-			`UPDATE orders SET status = 'closed', updated_at = now() WHERE id = $1 AND status = 'open' AND deleted_at IS NULL`,
-			t.OrderID,
-		); err != nil {
-			return err
+	// Decide "fully paid" inside this transaction: the row we just inserted is
+	// visible here, and the order row is still locked, so the sum is exact and
+	// no concurrent share can drift between the insert and this check.
+	if orderScoped {
+		var paid float64
+		if err := tx.QueryRow(ctx,
+			`SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE order_id = $1 AND status = 'Success'`, *t.OrderID).
+			Scan(&paid); err != nil {
+			return false, err
 		}
+		orderFullyPaid = paid >= total
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return orderFullyPaid, nil
 }
 
 func (r *TransactionRepo) GetByID(ctx context.Context, id string) (*model.Transaction, error) {

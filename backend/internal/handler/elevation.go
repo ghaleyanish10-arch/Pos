@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,12 @@ const (
 	discountNotifyThresholdPct = 20
 )
 
+// PINReauthWindow is how long a boss's verified login password stays trusted
+// for further PIN set/resets in this process. The first PIN change inside a
+// window still demands the password; later ones skip the prompt. It is a
+// package var so tests can shrink it — production keeps it at 30 minutes.
+var PINReauthWindow = 30 * time.Minute
+
 // ElevationHandler implements PIN step-up authorization:
 //   - POST /auth/elevate        — exchange a PIN for a single-use token
 //   - PUT  /staff/:id/pin       — boss-only PIN set/reset (password re-auth)
@@ -33,10 +40,45 @@ type ElevationHandler struct {
 	audit   *repo.AuditRepo
 	authSvc *auth.Service
 	config  *config.Config
+
+	// pinReauth records the last successful password verification per boss
+	// session so a fresh window can skip the prompt. Per-process: an API
+	// restart simply requires the password again.
+	pinReauthMu sync.Mutex
+	pinReauth   map[string]time.Time
 }
 
 func NewElevationHandler(r *repo.ElevationRepo, a *repo.AuditRepo, svc *auth.Service, cfg *config.Config) *ElevationHandler {
-	return &ElevationHandler{repo: r, audit: a, authSvc: svc, config: cfg}
+	return &ElevationHandler{
+		repo:      r,
+		audit:     a,
+		authSvc:   svc,
+		config:    cfg,
+		pinReauth: make(map[string]time.Time),
+	}
+}
+
+// rememberReauth stamps the caller's last successful password verification.
+func (h *ElevationHandler) rememberReauth(callerID string) {
+	h.pinReauthMu.Lock()
+	defer h.pinReauthMu.Unlock()
+	h.pinReauth[callerID] = time.Now()
+}
+
+// reauthFresh reports whether the caller verified their password recently
+// enough to skip the prompt. Stale grants are evicted lazily.
+func (h *ElevationHandler) reauthFresh(callerID string) bool {
+	h.pinReauthMu.Lock()
+	defer h.pinReauthMu.Unlock()
+	last, ok := h.pinReauth[callerID]
+	if !ok {
+		return false
+	}
+	if time.Since(last) > PINReauthWindow {
+		delete(h.pinReauth, callerID)
+		return false
+	}
+	return true
 }
 
 // elevationAudit writes an audit_events row for every elevation attempt,
@@ -95,6 +137,17 @@ func (h *ElevationHandler) Elevate(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "elevation lookup failed"})
+		return
+	}
+
+	// Only Manager/Admin PINs authorize actions — exactly the population
+	// ListPINHolders surfaces and the lockout notifications notify. A cashier
+	// or other role with a stored PIN (roster/clock-in) must never elevate.
+	if status.Role != "Store Manager" && status.Role != "Corporate Admin" {
+		h.elevationAudit(c, actorID.(string), actorEmail.(string), actorRole.(string),
+			"elevation.failed", "elevation failed: pin holder cannot elevate",
+			map[string]any{"pin_holder_id": status.UserID, "pin_holder_role": status.Role, "action": req.Action, "resource_id": req.ResourceID})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid PIN or pin holder"})
 		return
 	}
 
@@ -195,8 +248,11 @@ func (h *ElevationHandler) Elevate(c *gin.Context) {
 
 // SetPIN lets a Corporate Admin (boss) set or reset another user's PIN. It
 // requires the boss's own login password as re-auth — a session alone is not
-// enough. Managers can never set PINs; nobody can read a PIN back, only
-// overwrite it.
+// enough. A verified password stays trusted for one PINReauthWindow, so a
+// freshly re-authenticated boss can change several PINs in a row without
+// re-entering it; requesting a PIN change with an empty password outside that
+// window is refused with 401 and the client must re-confirm. Managers can
+// never set PINs; nobody can read a PIN back, only overwrite it.
 func (h *ElevationHandler) SetPIN(c *gin.Context) {
 	callerID, _ := c.Get("user_id")
 	callerRole, _ := c.Get("role")
@@ -208,14 +264,22 @@ func (h *ElevationHandler) SetPIN(c *gin.Context) {
 
 	var req model.SetPINRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pin and your own password are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pin is required"})
 		return
 	}
 
 	// Re-authenticate the caller with their login password. A stolen session
-	// token alone must not be able to mint PINs.
-	if verr := h.authSvc.VerifyPassword(c.Request.Context(), callerID.(string), req.Password); verr != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "your password did not match — PIN not changed"})
+	// token alone must not be able to mint PINs — but a password confirmed
+	// within the last PINReauthWindow satisfies the requirement for the whole
+	// window, so a trusted boss does not type it for every single PIN.
+	if req.Password != "" {
+		if verr := h.authSvc.VerifyPassword(c.Request.Context(), callerID.(string), req.Password); verr != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "your password did not match — PIN not changed"})
+			return
+		}
+		h.rememberReauth(callerID.(string))
+	} else if !h.reauthFresh(callerID.(string)) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "re-auth required — enter your password"})
 		return
 	}
 
@@ -253,10 +317,56 @@ func (h *ElevationHandler) SetPIN(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "PIN updated"})
 }
 
-// ListPINHolders exposes which managers/admins can currently elevate — the
-// PIN modal needs this list to offer a picker. It contains no secret data.
+// DeleteAccount soft-deletes a staff account (boss-only). The row drops out
+// of login, roster and PIN lists; its PIN, refresh token and lockout state are
+// cleared, and any approved-terminal or pending-elevation ties are revoked.
+// The boss can never delete their own account.
+func (h *ElevationHandler) DeleteAccount(c *gin.Context) {
+	callerID, _ := c.Get("user_id")
+	callerRole, _ := c.Get("role")
+
+	if callerRole.(string) != "Corporate Admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only the boss can delete staff accounts"})
+		return
+	}
+
+	targetID := c.Param("id")
+	if targetID == callerID.(string) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "you cannot delete your own account"})
+		return
+	}
+
+	target, err := h.repo.LoadPIN(c.Request.Context(), targetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "staff member not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "lookup failed"})
+		return
+	}
+
+	if err := h.repo.DeleteAccount(c.Request.Context(), targetID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "staff member not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete staff account"})
+		return
+	}
+
+	h.elevationAudit(c, callerID.(string), c.GetString("email"), callerRole.(string),
+		"staff.deleted", "staff account deleted by boss",
+		map[string]any{"target_user_id": targetID, "target_role": target.Role})
+
+	c.JSON(http.StatusOK, gin.H{"message": "staff account deleted"})
+}
+
+// ListPINHolders exposes which managers/admins of the caller's own branch can
+// currently elevate — the PIN modal needs this list to offer a picker. It
+// contains no secret data and never crosses branches.
 func (h *ElevationHandler) ListPINHolders(c *gin.Context) {
-	users, err := h.repo.ListPINHolders(c.Request.Context())
+	users, err := h.repo.ListPINHolders(c.Request.Context(), branchIDFromCtx(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list pin holders"})
 		return
@@ -265,9 +375,9 @@ func (h *ElevationHandler) ListPINHolders(c *gin.Context) {
 }
 
 // ListUsers (boss-only) lists accounts with a has_pin flag so the boss can
-// see who still needs a PIN.
+// see who still needs a PIN — strictly within their own branch.
 func (h *ElevationHandler) ListUsers(c *gin.Context) {
-	users, err := h.repo.ListUsers(c.Request.Context())
+	users, err := h.repo.ListUsers(c.Request.Context(), branchIDFromCtx(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list users"})
 		return

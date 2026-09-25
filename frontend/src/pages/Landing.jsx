@@ -26,8 +26,24 @@ export function Landing() {
   const [providers, setProviders] = useState(null);
   const [form, setForm] = useState({ business: '', email: '', password: '', confirm: '' });
   const [error, setError] = useState('');
+  const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // A mid-use token expiry wipes the session and lands here — say so instead
+    // of silently showing a dead login form. Consumed once, cleared on login.
+    if (localStorage.getItem('mesa_session_notice') === 'expired') {
+      setExpired(true);
+      localStorage.removeItem('mesa_session_notice');
+    }
+    const onExpired = () => {
+      setExpired(true);
+      localStorage.removeItem('mesa_session_notice');
+    };
+    window.addEventListener('mesa-session-expired', onExpired);
+    return () => window.removeEventListener('mesa-session-expired', onExpired);
+  }, []);
 
   useEffect(() => {
     // Already holding a live session (stale tab, old bookmark): the
@@ -130,6 +146,11 @@ export function Landing() {
 
         {/* Auth card side */}
         <section className="w-full max-w-[400px]">
+          {expired && (
+            <div className="mb-3 rounded-xl border border-status-red/30 bg-tint-red px-4 py-3">
+              <p className="text-13 font-semibold text-status-red">Your session expired — please sign in again to keep working.</p>
+            </div>
+          )}
           <AuthCard>
             <div className="mb-5 grid grid-cols-2 rounded-xl bg-canvas p-1">
             {['login', 'signup'].map((m) => (

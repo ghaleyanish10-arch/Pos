@@ -12,7 +12,7 @@ import { RestrictedState } from '../role/RestrictedState';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { useToast } from '../ui/Toast';
 import { useDevice } from '../../state/DeviceContext';
-import { api } from '../../api/client';
+import { api, clearApiSession } from '../../api/client';
 import { useBackoffInterval } from '../../api/poll';
 import { useNotifications } from '../../state/Notifications';
 import { useSound } from '../../state/SoundContext';
@@ -201,6 +201,13 @@ export function AppShell() {
   // screen; any other protected path belongs behind the owner landing page.
   if (!role && !publicPage) {
     if (pathname === '/terminal') return <ClockIn />;
+    // A token can remain in localStorage while the user payload is gone or
+    // the role never hydrated (expired/partial session). RootRoute treats that
+    // token as "logged in", which produced a / <-> /dashboard redirect loop.
+    // Clear the half-dead session and settle on the landing page exactly once.
+    if (localStorage.getItem('mesa_token')) {
+      clearApiSession();
+    }
     return <Navigate to="/" replace />;
   }
 
