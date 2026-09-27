@@ -8,6 +8,7 @@ import { AlertBanner } from '../components/ui/AlertBanner';
 import { Field, inputClass } from '../components/ui/Controls';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
+import { money } from '../utils/format';
 
 const fromLine = (l) => ({
   ingredient: l?.ingredient || '',
@@ -28,7 +29,7 @@ const plateCostOf = (r) => (r.plate_cost != null ? Number(r.plate_cost) || 0
 
 const menuPriceOf = (r) => (r.menu_price != null ? Number(r.menu_price) : Number(r.target_cost) || 0);
 const marginOf = (price, cost) => (price > 0 ? Math.round(((price - cost) / price) * 100) : null);
-const fmtRs = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `Rs ${Math.round(Number(n))}` : '—');
+const fmtRs = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? `${money(Math.round(Number(n)))}` : '—');
 
 /**
  * Recipe costing: a list of all recipes (name, plate cost, margin) is the

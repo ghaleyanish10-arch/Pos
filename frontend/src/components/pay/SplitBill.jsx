@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { MinusIcon, PlusIcon, UsersIcon } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { GatewayTiles } from './GatewayTiles';
+import { money } from '../../utils/format';
 
-const rs = (n) => `Rs ${Math.round(n).toLocaleString('en-IN')}`;
+const rs = (n) => `${money(Math.round(n).toLocaleString('en-IN'))}`;
 
 /**
  * Split bill — one clear step, thumb-reachable, no wizard. Two modes:

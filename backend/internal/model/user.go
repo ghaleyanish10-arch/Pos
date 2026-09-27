@@ -31,12 +31,13 @@ type RegisterRequest struct {
 }
 
 // SignupRequest is the public business-owner signup: name, email and password
-// create a Corporate Admin account (the existing top role). The account is
-// verified by 6-digit code before the admin dashboard unlocks.
+// create an organization (the tenant), its first branch and a Corporate Admin
+// account. Currency defaults to NPR when omitted.
 type SignupRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	Currency string `json:"currency"`
 }
 
 // VerifyCodeRequest submits the 6-digit code emailed at signup.

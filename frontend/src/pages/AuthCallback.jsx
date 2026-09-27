@@ -8,6 +8,7 @@ import { authorizeSession } from '../api/client';
 export function AuthCallback() {
   const [params] = useSearchParams();
   const token = params.get('token') || '';
+  const declined = params.get('error') || '';
   const navigate = useNavigate();
   const [state, setState] = useState('working'); // working | ok | error
   const [message, setMessage] = useState('');
@@ -15,6 +16,15 @@ export function AuthCallback() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (declined) {
+        // The visitor never finished Google's consent screen. Nothing was
+        // changed server-side; just explain and point them back.
+        if (!cancelled) {
+          setState('error');
+          setMessage('The Google sign-in was not completed — your account is unchanged. Try again when you are ready.');
+        }
+        return;
+      }
       if (!token) {
         if (!cancelled) { setState('error'); setMessage('This sign-in returned no session. Try again on the login page.'); }
         return;
@@ -38,7 +48,7 @@ export function AuthCallback() {
       }
     })();
     return () => { cancelled = true; };
-  }, [token, navigate, params]);
+  }, [token, navigate, params, declined]);
 
   return (
     <AuthShell>

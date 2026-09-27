@@ -12,6 +12,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import { guestTimeline, guests as guestsData } from '../data/manage';
 import api from '../api/client';
+import { money } from '../utils/format';
 
 const tierTone = {
   VIP: 'purple',
@@ -37,7 +38,7 @@ const fromApi = (g) => ({
   initials: g.initials || g.name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase() || g.name.slice(0, 2).toUpperCase(),
   visits: g.visits || 0,
   lastVisit: fmtVisit(g.last_visit),
-  avgSpend: `Rs ${Number(g.avg_spend || 0).toLocaleString('en-IN')}`,
+  avgSpend: `${money(Number(g.avg_spend || 0).toLocaleString('en-IN'))}`,
   tier: g.tier || 'New',
   segment: Array.isArray(g.segments) ? g.segments : (typeof g.segments === 'string' ? safeSegments(g.segments) : []),
   note: g.note || undefined

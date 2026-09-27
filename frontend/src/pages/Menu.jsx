@@ -19,6 +19,7 @@ import { Pill } from '../components/ui/Pill';
 import { useToast } from '../components/ui/Toast';
 import { useMenu } from '../state/MenuContext';
 import { csvFields } from '../data/manage';
+import { money } from '../utils/format';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -595,7 +596,7 @@ export function Menu() {
         open={!!editing}
         onClose={() => setEditing(null)}
         title={editing ? editing.name : ''}
-        subtitle={editing ? `${editing.category} · ${editing.priceNum ? `Rs ${editing.priceNum}` : ''}` : ''}
+        subtitle={editing ? `${editing.category} · ${editing.priceNum ? `${money(editing.priceNum)}` : ''}` : ''}
         footer={
         <>
             <Button variant="outline" onClick={() => setEditing(null)}>
@@ -632,7 +633,7 @@ export function Menu() {
                   min="0"
                   className={inputClass}
                   value={editDraft.priceNum ?? ''}
-                  onChange={(e) => setEditDraft((d) => ({ ...d, priceNum: Number(e.target.value), price: `Rs ${e.target.value}` }))} />
+                  onChange={(e) => setEditDraft((d) => ({ ...d, priceNum: Number(e.target.value), price: `${money(e.target.value)}` }))} />
               </Field>
               <Field label="Cost (Rs)">
                 <input
@@ -723,7 +724,7 @@ export function Menu() {
                 const price = Number(newItem.price.replace(/\D/g, ''));
                 addItem({
                   name: newItem.name.trim(),
-                  price: `Rs ${price}`,
+                  price: `${money(price)}`,
                   priceNum: price,
                   cost: Number(newItem.cost) || 0,
                   category: newItem.category,

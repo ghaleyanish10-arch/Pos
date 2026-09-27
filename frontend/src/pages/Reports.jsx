@@ -17,11 +17,12 @@ import { TrendChart } from '../components/ui/TrendChart';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
+import { money } from '../utils/format';
 
 const RANGE_OPTIONS = ['Today', '7 days', '28 days', 'All time'];
 const RANGE_DAYS = { 'Today': 1, '7 days': 7, '28 days': 28, 'All time': 0 };
 
-const rs = (n) => `Rs ${Math.round(n || 0).toLocaleString('en-IN')}`;
+const rs = (n) => `${money(Math.round(n || 0).toLocaleString('en-IN'))}`;
 
 const hourLabel = (h) => `${String(h % 24).padStart(2, '0')}:00`;
 

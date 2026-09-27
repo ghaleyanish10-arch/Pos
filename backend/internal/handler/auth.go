@@ -20,10 +20,11 @@ type AuthHandler struct {
 	config *config.Config
 	email  *email.Service
 	smtp   *mailer.Mailer
+	audit  *repo.AuditRepo
 }
 
-func NewAuthHandler(svc *auth.Service, r *repo.UserRepo, cfg *config.Config) *AuthHandler {
-	return &AuthHandler{svc: svc, repo: r, config: cfg}
+func NewAuthHandler(svc *auth.Service, r *repo.UserRepo, cfg *config.Config, a *repo.AuditRepo) *AuthHandler {
+	return &AuthHandler{svc: svc, repo: r, config: cfg, audit: a}
 }
 
 // SetEmail attaches the centralized email service (nil = email disabled and
@@ -38,8 +39,8 @@ func (h *AuthHandler) SetSMTP(m *mailer.Mailer) { h.smtp = m }
 // no secrets — only booleans derived from env presence.
 func (h *AuthHandler) Providers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"google":     h.config.GoogleClientID != "" && h.config.GoogleClientSecret != "",
-		"password":   true,
+		"google":      h.config.GoogleClientID != "" && h.config.GoogleClientSecret != "",
+		"password":    true,
 		"email_ready": h.email != nil && h.email.Enabled(),
 	})
 }
@@ -51,13 +52,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	userID, email, role, branchID, tokenVersion, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
+	userID, email, role, branchID, orgID, tokenVersion, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
 	}
 
-	tokens, err := auth.GenerateTokenPair(userID, email, role, branchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokens, err := auth.GenerateTokenPair(userID, email, role, branchID, orgID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate tokens"})
 		return
@@ -130,12 +131,17 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Email = strings.TrimSpace(req.Email)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
 	if len(req.Password) < 8 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "password must be at least 8 characters"})
 		return
 	}
 	if !strings.Contains(req.Email, "@") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enter a valid email address"})
+		return
+	}
+	if req.Currency != "" && !model.SupportedCurrencies[req.Currency] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported currency"})
 		return
 	}
 
@@ -145,9 +151,15 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 		return
 	}
 
-	// Business/tenant = branch. Claim the default branch for the new owner.
-	if branchID, berr := h.svc.EnsureDefaultBranch(c.Request.Context()); berr == nil {
+	// Business/tenant = organization. Create the org + its first branch and
+	// attach the owner — every later signup gets its own isolated tenant, not
+	// a claim on the shared demo branch.
+	orgID, branchID, oerr := h.svc.CreateOrganization(c.Request.Context(), req.Name, req.Currency)
+	if oerr == nil {
 		_ = h.svc.SetBranch(c.Request.Context(), userID, branchID)
+		_ = h.svc.AttachUserToOrg(c.Request.Context(), userID, orgID)
+	} else {
+		ginLog("signup org creation failed (account keeps legacy branch claim): " + oerr.Error())
 	}
 
 	// OTP email verification: the account is created verified (Register stamps
@@ -277,11 +289,12 @@ func (h *AuthHandler) VerifyCode(c *gin.Context) {
 	if user.BranchID != nil {
 		branchID = *user.BranchID
 	}
+	orgID, _ := h.svc.UserOrg(c.Request.Context(), user.ID)
 	tokenVersion, verr := h.svc.CurrentTokenVersion(c.Request.Context(), user.ID)
 	if verr != nil {
 		tokenVersion = 0
 	}
-	tokens, terr := auth.GenerateTokenPair(user.ID, user.Email, user.Role, branchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokens, terr := auth.GenerateTokenPair(user.ID, user.Email, user.Role, branchID, orgID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if terr != nil {
 		// Verification still stands — the client falls back to the login page.
 		c.JSON(http.StatusOK, gin.H{"message": "email verified — welcome to Mesa OS"})
@@ -348,12 +361,17 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	if user.BranchID != nil {
 		branchID = *user.BranchID
 	}
+	// Currency rides along so every money format on the client comes from
+	// the org's ISO 4217 code instead of a hardcoded symbol.
+	currency, _ := h.svc.OrgCurrency(c.Request.Context(), c.GetString("org_id"))
 	c.JSON(http.StatusOK, gin.H{"user": gin.H{
 		"id":             user.ID,
 		"name":           user.Name,
 		"email":          user.Email,
 		"role":           user.Role,
 		"branch_id":      branchID,
+		"org_id":         c.GetString("org_id"),
+		"currency":       currency,
 		"email_verified": user.EmailVerifiedAt != nil,
 	}})
 }
@@ -402,8 +420,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":      userID,
-		"message": "user registered",
+		"id":                      userID,
+		"message":                 "user registered",
 		"email_verification_sent": verificationSent,
 	})
 }
@@ -558,7 +576,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	if verr != nil {
 		tokenVersion = 0
 	}
-	tokens, err := auth.GenerateTokenPair(claims.UserID, claims.Email, claims.Role, claims.BranchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	tokens, err := auth.GenerateTokenPair(claims.UserID, claims.Email, claims.Role, claims.BranchID, claims.OrgID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate tokens"})
 		return

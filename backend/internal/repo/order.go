@@ -170,9 +170,34 @@ func (r *OrderRepo) Create(ctx context.Context, o *model.Order, items []model.Cr
 	}
 	defer tx.Rollback(ctx)
 
+	// Offline-sync idempotency: when the client generated an idempotency key,
+	// a replayed queued write must return the ORIGINAL order instead of
+	// inserting a duplicate. The partial unique index (migration 016) makes
+	// the second insert fail; we treat that as "already synced".
+	if o.IdempotencyKey != "" {
+		var existingID string
+		err = tx.QueryRow(ctx,
+			`SELECT id::text FROM orders WHERE idempotency_key = $1::uuid`,
+			o.IdempotencyKey,
+		).Scan(&existingID)
+		if err == nil {
+			o.ID = existingID
+			o.Status = "open"
+			_ = tx.QueryRow(ctx,
+				`SELECT created_at, updated_at, total FROM orders WHERE id = $1`, existingID,
+			).Scan(&o.CreatedAt, &o.UpdatedAt, &o.Total)
+			return tx.Commit(ctx)
+		}
+		if err != pgx.ErrNoRows {
+			return err
+		}
+	}
+
 	err = tx.QueryRow(ctx,
-		`INSERT INTO orders (type, table_id, guest_id, status, branch_id) VALUES ($1, NULLIF($2,'')::uuid, NULLIF($3,'')::uuid, 'open', NULLIF($4,'')::uuid) RETURNING id, created_at, updated_at`,
-		o.Type, o.TableID, o.GuestID, o.BranchID,
+		`INSERT INTO orders (type, table_id, guest_id, status, branch_id, idempotency_key, client_created_at)
+		 VALUES ($1, NULLIF($2,'')::uuid, NULLIF($3,'')::uuid, 'open', NULLIF($4,'')::uuid, NULLIF($5,'')::uuid, NULLIF($6,'')::timestamptz)
+		 RETURNING id, created_at, updated_at`,
+		o.Type, o.TableID, o.GuestID, o.BranchID, o.IdempotencyKey, o.ClientCreatedAt,
 	).Scan(&o.ID, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return err
@@ -492,10 +517,17 @@ func (r *OrderRepo) MergeTables(ctx context.Context, targetTableID, sourceTableI
 		return "", 0, "", "", err
 	}
 	var srcID, srcGuest string
+	var sourceOccupied bool
 	switch n := len(sourceOrders); {
 	case n == 0:
-		return "", 0, "", "", ErrSourceNotOccupied
+		// Vacant source: legal since vacant tables may merge too (e.g. two
+		// empty tables grouped for a large party). No check folds — the merge
+		// is purely a floor grouping that seat counts and the floor card
+		// reflect. The target's own check (if any) stays untouched.
+		sourceOccupied = false
+		srcID, srcGuest = "", ""
 	case n == 1:
+		sourceOccupied = true
 		srcID, srcGuest = sourceOrders[0].id, sourceOrders[0].guest
 	default:
 		return "", 0, "", "", ErrMultipleOpenOrders
@@ -528,12 +560,20 @@ func (r *OrderRepo) MergeTables(ctx context.Context, targetTableID, sourceTableI
 	guestArg := nullableText(srcGuest)
 	switch n := len(targetOrderIDs); {
 	case n == 0:
-		if err := tx.QueryRow(ctx,
-			`INSERT INTO orders (type, table_id, branch_id, guest_id, status, total)
-			 VALUES ('dine-in', $1, $2, $3, 'open', 0)
-			 RETURNING id::text`,
-			targetTableID, branchArg, guestArg).Scan(&tgtID); err != nil {
-			return "", 0, "", "", err
+		if sourceOccupied {
+			// Occupied source folding into a vacant target: open a fresh
+			// combined check on the target for the items to land in.
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO orders (type, table_id, branch_id, guest_id, status, total)
+				 VALUES ('dine-in', $1, $2, $3, 'open', 0)
+				 RETURNING id::text`,
+				targetTableID, branchArg, guestArg).Scan(&tgtID); err != nil {
+				return "", 0, "", "", err
+			}
+		} else {
+			// Vacant→vacant merge: no check is opened. The group stays
+			// vacant until the first order lands on any member.
+			tgtID = ""
 		}
 	case n == 1:
 		tgtID = targetOrderIDs[0]
@@ -541,38 +581,40 @@ func (r *OrderRepo) MergeTables(ctx context.Context, targetTableID, sourceTableI
 		return "", 0, "", "", ErrMultipleOpenOrders
 	}
 
-	// Consolidate: pull every source line item onto the combined check, then
-	// recompute the combined total from the items that now live under it.
-	itag, err := tx.Exec(ctx,
-		`UPDATE order_items SET order_id = $1 WHERE order_id = $2`, tgtID, srcID)
-	if err != nil {
-		return "", 0, "", "", err
-	}
-	itemsMoved = int(itag.RowsAffected())
-
-	if _, err := tx.Exec(ctx,
-		`UPDATE orders SET total = (
-		     SELECT COALESCE(SUM(price * qty), 0) FROM order_items WHERE order_id = $1
-		 ), updated_at = now()
-		 WHERE id = $1`, tgtID); err != nil {
-		return "", 0, "", "", err
-	}
-
-	// The kitchen tickets follow the food: relabel to the combined table.
-	if targetName != "" {
-		if _, err := tx.Exec(ctx,
-			`UPDATE kds_tickets SET order_id = $1, tag = 'Table ' || $2
-			 WHERE order_id = $3`,
-			tgtID, targetName, srcID); err != nil {
+	// Consolidate the check only when a real source order exists. A vacant
+	// source contributes no items and no tickets — nothing to fold.
+	if srcID != "" {
+		itag, err := tx.Exec(ctx,
+			`UPDATE order_items SET order_id = $1 WHERE order_id = $2`, tgtID, srcID)
+		if err != nil {
 			return "", 0, "", "", err
 		}
-	}
+		itemsMoved = int(itag.RowsAffected())
 
-	// Fold the source check away with a distinguishably-'merged' status, keep
-	// the row for audit/reporting.
-	if _, err := tx.Exec(ctx,
-		`UPDATE orders SET status = 'merged', updated_at = now() WHERE id = $1`, srcID); err != nil {
-		return "", 0, "", "", err
+		if _, err := tx.Exec(ctx,
+			`UPDATE orders SET total = (
+			     SELECT COALESCE(SUM(price * qty), 0) FROM order_items WHERE order_id = $1
+			 ), updated_at = now()
+			 WHERE id = $1`, tgtID); err != nil {
+			return "", 0, "", "", err
+		}
+
+		// The kitchen tickets follow the food: relabel to the combined table.
+		if targetName != "" {
+			if _, err := tx.Exec(ctx,
+				`UPDATE kds_tickets SET order_id = $1, tag = 'Table ' || $2
+				 WHERE order_id = $3`,
+				tgtID, targetName, srcID); err != nil {
+				return "", 0, "", "", err
+			}
+		}
+
+		// Fold the source check away with a distinguishably-'merged' status, keep
+		// the row for audit/reporting.
+		if _, err := tx.Exec(ctx,
+			`UPDATE orders SET status = 'merged', updated_at = now() WHERE id = $1`, srcID); err != nil {
+			return "", 0, "", "", err
+		}
 	}
 
 	// Point the source table at the target — this is what makes the floor
@@ -599,6 +641,55 @@ func (r *OrderRepo) MergeTables(ctx context.Context, targetTableID, sourceTableI
 		return "", 0, "", "", err
 	}
 	return tgtID, itemsMoved, targetName, sourceName, nil
+}
+
+// UnmergeTables clears merged_into on every child pointing at the target and
+// returns the names released. The target keeps its open check and any items
+// already folded in — unmerging splits the FLOOR CARD, not the bill.
+func (r *OrderRepo) UnmergeTables(ctx context.Context, targetTableID string) ([]string, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM floor_tables WHERE id = $1)`, targetTableID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrTargetTableNotFound
+	}
+
+	var released []string
+	rows, err := tx.Query(ctx,
+		`SELECT name FROM floor_tables WHERE merged_into = $1`, targetTableID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		released = append(released, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE floor_tables SET merged_into = NULL WHERE merged_into = $1`, targetTableID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return released, nil
 }
 
 func (r *OrderRepo) Delete(ctx context.Context, id string) error {

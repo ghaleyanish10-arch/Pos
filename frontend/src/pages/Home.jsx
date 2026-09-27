@@ -31,6 +31,7 @@ import { api } from '../api/client';
 import { useBackoffInterval } from '../api/poll';
 import { elapsedFrom, isOverSLA, normalizeTicket, shortId, SLA_MINUTES, useElapsedClock } from '../api/normalize';
 import { stations } from '../data/pos';
+import { money, toNum } from '../utils/format';
 
 const registerKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'];
 const registerOptions = ['Register 1', 'Register 2', 'Register 3'];
@@ -41,7 +42,7 @@ const STATUS_TONE = {
   ready: 'green'
 };
 
-const fmtRs = (n) => `Rs ${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+const fmtRs = (n) => money(Math.round(toNum(n)));
 const parseAmt = (v) => (typeof v === 'number' ? v : Number(String(v).replace(/[^\d.]/g, '')) || 0);
 const compactAmt = (n) => {
   const v = Number(n) || 0;
@@ -57,13 +58,16 @@ const trackTitle = (t) => {
   return shortId(t?.id);
 };
 
-function Kpi({ label, value, meta, note, hero = false }) {
+function Kpi({ label, value, meta, note, hero = false, loading = false }) {
+  // While the summary is still fetching, the value skeleton shows instead of
+  // a mid-computation number — the card never renders "RsNaN" or a stale 0.
+  const shown = loading ? <span className="inline-block h-7 w-24 animate-pulse rounded bg-white/20 align-middle" /> : value;
   if (hero) {
     return (
       <div className="rounded-card p-6 lg:p-7 border border-ink bg-ink text-white">
         <p className="text-caption font-semibold text-white/60">{label}</p>
-        <p className="mt-1.5 text-3xl font-extrabold tracking-tight text-white lg:text-[2rem]">{value}</p>
-        {meta && <p className="mt-1 text-xs text-white/60">{meta}</p>}
+        <p className="mt-1.5 text-3xl font-extrabold tracking-tight text-white lg:text-[2rem]">{shown}</p>
+        {meta && !loading && <p className="mt-1 text-xs text-white/60">{meta}</p>}
         {note && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-white/50">{note}</p>}
       </div>
     );
@@ -71,8 +75,8 @@ function Kpi({ label, value, meta, note, hero = false }) {
   return (
     <Card>
       <p className="text-caption font-semibold text-meta">{label}</p>
-      <p className="mt-1.5 text-2xl font-extrabold tracking-tight text-ink">{value}</p>
-      {meta && <p className="mt-1 text-xs text-meta">{meta}</p>}
+      <p className="mt-1.5 text-2xl font-extrabold tracking-tight text-ink">{shown}</p>
+      {meta && !loading && <p className="mt-1 text-xs text-meta">{meta}</p>}
       {note && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-accent">{note}</p>}
     </Card>
   );
@@ -103,6 +107,7 @@ export function Home() {
   const now = useElapsedClock(30000);
 
   const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
   const [tickets, setTickets] = useState(null);
   const [attention, setAttention] = useState(null);
   const [payRows, setPayRows] = useState(null);
@@ -124,8 +129,8 @@ export function Home() {
     // kitchen hat should not 403 on every visit.
     if (!can('/reports')) return undefined;
     api('/reports/summary')
-      .then((res) => { if (!off && res) setSummary(res); })
-      .catch(() => {});
+      .then((res) => { if (!off) { setSummary(res); setSummaryLoading(false); } })
+      .catch(() => { if (!off) setSummaryLoading(false); });
     return () => { off = true; };
   }, [canRegister, role]);
 
@@ -230,11 +235,15 @@ export function Home() {
   const revenueSeries = (summary?.revenue?.length
     ? [...summary.revenue].reverse().slice(-7)
     : []);
-  const totalRevenue = summary?.total_revenue > 0 ? summary.total_revenue : 0;
+  const totalRevenue = toNum(summary?.total_revenue);
   const [r0, r1] = revenueSeries.length >= 2
     ? [revenueSeries[revenueSeries.length - 2].amount, revenueSeries[revenueSeries.length - 1].amount]
     : [0, 0];
   const deltaPct = r0 > 0 ? (((r1 - r0) / r0) * 100).toFixed(1) : null;
+  // Average = total ÷ order count, computed here (not trusted from the API)
+  // with a division-by-zero guard so zero orders render "Rs 0", never NaN.
+  const totalOrders = toNum(summary?.total_orders);
+  const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
   const maxRevenue = Math.max(...revenueSeries.map((p) => p.amount));
 
   const topProducts = (summary?.top_sellers || []).slice(0, 5);
@@ -264,7 +273,7 @@ export function Home() {
 
   const lateKitchen = kitchen.reduce((s, k) => s + k.late, 0);
 
-  const grossSales = totalRevenue ? totalRevenue.toLocaleString('en-IN') : '0';
+  const grossSales = totalRevenue ? totalRevenue.toLocaleString('en-IN') : '0'; // raw string for comparisons only
   const floatDisplay = Number(floatValue || 0).toLocaleString('en-IN');
   // TODO(real-close): refunds and expected cash must come from the payments /
   // cash-drawer APIs before Close-of-day can be trusted with real money.
@@ -305,7 +314,7 @@ export function Home() {
     if (floatValue === '0') return;
     setRegisterInfo({ float: floatDisplay, register: selectedRegister, cashier: cashierName });
     setRegisterOpen(false);
-    toast.success(`Register open · Rs ${floatDisplay}`);
+    toast.success(`Register open · ${money(floatDisplay)}`);
   };
 
   const confirmClose = () => {
@@ -363,7 +372,8 @@ export function Home() {
           hero
           label="Today's sales"
           value={fmtRs(totalRevenue)}
-          meta={`${deltaPct !== null ? `${deltaPct >= 0 ? '+' : ''}${deltaPct}% vs previous period` : 'vs previous period'} · ${summary?.avg_order_value ? `avg ${fmtRs(summary.avg_order_value)} / order` : ''}`}
+          loading={summaryLoading}
+          meta={`${deltaPct !== null ? `${deltaPct >= 0 ? '+' : ''}${deltaPct}% vs previous period` : 'vs previous period'} · avg ${fmtRs(avgOrderValue)} / order`}
           note="last 24 hours" />
         <Kpi
           label="Orders"
@@ -494,7 +504,7 @@ export function Home() {
               seriesLabel="Sales"
               labelEvery={1}
               height={236}
-              formatY={(v) => `Rs ${compactAmt(v)}`}
+              formatY={(v) => `${money(compactAmt(v))}`}
               formatValue={(v) => fmtRs(v)}
               formatTitle={(row) => String(row?.date ?? '')} />
           ) : (
@@ -619,7 +629,7 @@ export function Home() {
         open={closeOpen}
         onClose={() => setCloseOpen(false)}
         title="Close of day"
-        subtitle={registerInfo ? `Rs ${registerInfo.float} · ${registerInfo.register}` : undefined}
+        subtitle={registerInfo ? `${money(registerInfo.float)} · ${registerInfo.register}` : undefined}
         footer={<Button variant="dark" full onClick={confirmClose}>Confirm close</Button>}>
         <div className="space-y-5">
           <div className="space-y-2">

@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ConciergeBellIcon } from 'lucide-react';
+import { ConciergeBellIcon, Loader2Icon } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Field, inputClass } from '../components/ui/Controls';
 import { AuthCard, AuthHeader } from '../components/auth/AuthChrome';
 import { api, authorizeSession, hasApiSession } from '../api/client';
 
 const GoogleGlyph = () => (
-  <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+  <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
     <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.2H12v4.1h6.6c-.1 1.1-.8 2.8-2.4 3.9l3.7 2.9c2.3-2.1 3.6-5.2 3.6-8.7z" />
     <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.7-2.9c-1 .7-2.4 1.2-4.2 1.2-3.2 0-5.9-2.1-6.9-5l-3.9 3C3.2 21.3 7.3 24 12 24z" />
     <path fill="#FBBC05" d="M5.1 14.4c-.2-.7-.4-1.5-.4-2.4s.2-1.7.4-2.4l-3.9-3C.4 8.2 0 10 0 12s.4 3.8 1.2 5.4l3.9-3z" />
@@ -28,6 +28,7 @@ export function Landing() {
   const [error, setError] = useState('');
   const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -109,6 +110,21 @@ export function Landing() {
     setForm({ business: '', email: '', password: '', confirm: '' });
   };
 
+  const startGoogle = () => {
+    if (googleBusy || busy) return;
+    setError('');
+    // One button for both sign-in and sign-up: the backend's /auth/google
+    // callback finds the account by Google identity, links it by email, or
+    // creates it — so the client only ever has to start the flow. A full-page
+    // navigation (not a fetch) is required: the OAuth code exchange rides on
+    // a short-lived HttpOnly state cookie planted by GET /auth/google. The
+    // busy flag lives for the duration of the unload; a declined consent or
+    // failed exchange bounces back through /auth/callback and a fresh mount
+    // of this page (where googleBusy starts false) is always clean.
+    setGoogleBusy(true);
+    window.location.assign('/api/v1/auth/google');
+  };
+
   return (
     <div className="flex min-h-full flex-col bg-canvas">
       <AuthHeader>
@@ -175,11 +191,17 @@ export function Landing() {
 
           {providers?.google && (
             <>
-              <a href="/api/v1/auth/google" className="mt-5 block">
-                <Button variant="outline" full type="button" icon={<GoogleGlyph />}>
-                  {mode === 'login' ? 'Continue with Google' : 'Sign up with Google'}
-                </Button>
-              </a>
+              <Button
+                variant="google"
+                size="lg"
+                full
+                type="button"
+                disabled={googleBusy}
+                onClick={startGoogle}
+                icon={googleBusy ? <Loader2Icon className="h-5 w-5 animate-spin text-[#747775]" /> : <GoogleGlyph />}
+                className="mt-5">
+                {googleBusy ? 'Connecting to Google…' : 'Continue with Google'}
+              </Button>
               <div className="my-4 flex items-center gap-3">
                 <span className="h-px flex-1 bg-line" />
                 <span className="text-caption font-semibold text-meta">or</span>

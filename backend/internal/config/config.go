@@ -8,12 +8,12 @@ import (
 )
 
 type Config struct {
-	Port            string
-	DatabaseURL     string
-	JWTSecret       string
-	JWTAccessExpiry time.Duration
+	Port             string
+	DatabaseURL      string
+	JWTSecret        string
+	JWTAccessExpiry  time.Duration
 	JWTRefreshExpiry time.Duration
-	CORSOrigin      string
+	CORSOrigin       string
 
 	// ShiftTTL is the lifetime of a clock-in session token (one shift).
 	ShiftTTL time.Duration
@@ -26,10 +26,10 @@ type Config struct {
 	SMTPFrom     string
 
 	// Resend — real email delivery from localhost (api.resend.com).
-	RESENDAPIKey string
-	EmailFrom    string
+	RESENDAPIKey  string
+	EmailFrom     string
 	EmailFromName string
-	AppURL       string
+	AppURL        string
 
 	// Google OAuth — admin/owner signup. When unset, the Google sign-in
 	// endpoints answer 503 ("not configured") and email+password signup
@@ -37,19 +37,26 @@ type Config struct {
 	GoogleClientID     string
 	GoogleClientSecret string
 	GoogleRedirectURL  string
+
+	// GoogleTokenURL / GoogleUserInfoURL override the OAuth endpoints Google
+	// is reached at. Empty defaults to the real accounts.google.com /
+	// www.googleapis.com addresses (see handler/google.go). Test and staging
+	// environments point these at a local fake server.
+	GoogleTokenURL    string
+	GoogleUserInfoURL string
 }
 
 func Load() *Config {
 	godotenv.Load()
 
 	return &Config{
-		Port:            getEnv("PORT", "8080"),
-		DatabaseURL:     getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/mesa_os?sslmode=disable"),
-		JWTSecret:       getEnv("JWT_SECRET", "change-me"),
-		JWTAccessExpiry: parseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m")),
+		Port:             getEnv("PORT", "8080"),
+		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/mesa_os?sslmode=disable"),
+		JWTSecret:        getEnv("JWT_SECRET", "change-me"),
+		JWTAccessExpiry:  parseDuration(getEnv("JWT_ACCESS_EXPIRY", "15m")),
 		JWTRefreshExpiry: parseDuration(getEnv("JWT_REFRESH_EXPIRY", "168h")),
-		CORSOrigin:      getEnv("CORS_ORIGIN", "http://localhost:5173"),
-		ShiftTTL:        parseDuration(getEnv("SHIFT_TTL", "12h")),
+		CORSOrigin:       getEnv("CORS_ORIGIN", "http://localhost:5173"),
+		ShiftTTL:         parseDuration(getEnv("SHIFT_TTL", "12h")),
 
 		SMTPHost:     getEnv("SMTP_HOST", ""),
 		SMTPPort:     getEnv("SMTP_PORT", "587"),
@@ -57,14 +64,16 @@ func Load() *Config {
 		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
 		SMTPFrom:     getEnv("SMTP_FROM", ""),
 
-		RESENDAPIKey: getEnv("RESEND_API_KEY", ""),
-		EmailFrom:    getEnv("EMAIL_FROM", ""),
+		RESENDAPIKey:  getEnv("RESEND_API_KEY", ""),
+		EmailFrom:     getEnv("EMAIL_FROM", ""),
 		EmailFromName: getEnv("EMAIL_FROM_NAME", "Mesa OS"),
-		AppURL:       getEnv("APP_URL", "http://localhost:5173"),
+		AppURL:        getEnv("APP_URL", "http://localhost:5173"),
 
 		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:  getEnv("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/v1/auth/google/callback"),
+		GoogleTokenURL:     getEnv("GOOGLE_TOKEN_URL", ""),
+		GoogleUserInfoURL:  getEnv("GOOGLE_USERINFO_URL", ""),
 	}
 }
 

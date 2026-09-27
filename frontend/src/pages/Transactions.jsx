@@ -16,6 +16,7 @@ import { useTables } from '../state/TableContext';
 import { useSettings } from '../state/SettingsContext';
 import { printReceiptHtml } from '../utils/printReceipt';
 import { transactions as mockTransactions } from '../data/sell';
+import { money } from '../utils/format';
 
 const methodIcon = {
   Cash: <BanknoteIcon className="h-4 w-4 text-meta" />,
@@ -50,7 +51,7 @@ const methodLabel = (m) => {
 };
 
 const fmtTxAmount = (v) =>
-  typeof v === 'number' ? `Rs ${v.toLocaleString('en-IN')}` : String(v ?? '');
+  typeof v === 'number' ? money(v) : String(v ?? '');
 
 const fmtTxTime = (t) => {
   const d = new Date(t);
@@ -70,9 +71,15 @@ const txStatus = (t) => {
 function breakdownFor(t) {
   // API transactions carry their real amount; mock rows carry 'Rs 2,480' strings.
   if (typeof t.amount === 'number' && t.items) {
+    // Prefer the tax_breakdown snapshot recorded at charge time — later
+    // tax-rule edits never rewrite what a past receipt actually charged.
+    const snap = Array.isArray(t.tax_breakdown?.lines) ? t.tax_breakdown.lines : null;
     return {
       lines: t.items.map((i) => ({ name: i.name, qty: i.qty, price: i.price })),
-      tax: Math.round(t.amount * 0.13 / 1.13)
+      tax: snap
+        ? Math.round(snap.reduce((s2, l) => s2 + (Number(l.amount) || 0), 0))
+        : Math.round(t.amount * 0.13 / 1.13),
+      taxLabel: snap && snap.length ? snap.map((l) => `${l.name} ${l.rate}%`).join(' + ') : 'Tax'
     };
   }
   const amount = parseInt(String(t.amount).replace(/[^0-9]/g, ''), 10) || 0;
@@ -192,8 +199,8 @@ export function Transactions() {
       `Order ref: ${t.ref || '—'}`,
       ...(txTable(t) ? [`Table: ${txTable(t)}`] : []),
       '',
-      ...lines.map((l) => `- ${l.name} x${l.qty} = Rs ${(l.qty * l.price).toLocaleString('en-IN')}`),
-      `Tax (13%): Rs ${tax.toLocaleString('en-IN')}`,
+      ...lines.map((l) => `- ${l.name} x${l.qty} = ${money(l.qty * l.price)}`),
+      `${breakdownFor(t).taxLabel || 'Tax'}: ${money(tax)}`,
       `Total: ${fmtTxAmount(t.amount)}`,
       '',
       'Mesa OS · Restaurant POS'
@@ -210,12 +217,12 @@ export function Transactions() {
     // the real row: a Pending receipt must not claim revenue certification.
     const ok = printReceiptHtml({
       title: settings.businessName,
-      subtitle: `${settings.city} · VAT ${settings.vatNo}`,
+      subtitle: `${settings.city}${settings.vatNo ? ` · ${settings.vatNo}` : ''}`,
       subline: txTable(active) ? `Table ${labelOf(txTable(active))}` : (active.ref || String(active.id).slice(0, 8).toUpperCase()),
-      items: lines.map((l) => [`${l.qty}× ${l.name}`, `Rs ${(l.qty * l.price).toLocaleString('en-IN')}`]),
+      items: lines.map((l) => [`${l.qty}× ${l.name}`, money(l.qty * l.price)]),
       ledger: [
-        ['Subtotal', `Rs ${itemsTotal.toLocaleString('en-IN')}`],
-        ['VAT 13%', `Rs ${tax.toLocaleString('en-IN')}`]
+        ['Subtotal', money(itemsTotal)],
+        [breakdownFor(active).taxLabel || 'Tax', money(tax)]
       ],
       total: fmtTxAmount(active.amount),
       paidBy: methodLabel(active.method),

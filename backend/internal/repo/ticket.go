@@ -16,10 +16,24 @@ func NewTicketRepo(db *pgxpool.Pool) *TicketRepo {
 }
 
 func (r *TicketRepo) List(ctx context.Context, station, status string) ([]model.KDSTicket, error) {
-	query := `SELECT t.id, t.order_id, COALESCE(o.type, 'dine-in'), COALESCE(ft.name, ''), COALESCE(t.tag, ''), t.station, t.status, t.ai_phone, COALESCE(t.allergy, ''), t.fired, t.linked_ticket_id::text, t.created_at
+	// The table column carries the MERGED-GROUP label when the order sits on
+	// a table that has others merged into it: 'T11 + T12' — kitchen staff see
+	// which physical tables the ticket covers, matching the floor card.
+	query := `SELECT t.id, t.order_id, COALESCE(o.type, 'dine-in'),
+		CASE
+		    WHEN merged.kids IS NOT NULL AND array_length(merged.kids, 1) > 0
+		        THEN ft.name || ' + ' || array_to_string(merged.kids, ' + ')
+		    ELSE COALESCE(ft.name, '')
+		END,
+		COALESCE(t.tag, ''), t.station, t.status, t.ai_phone, COALESCE(t.allergy, ''), t.fired, t.linked_ticket_id::text, t.created_at
 		FROM kds_tickets t
 		LEFT JOIN orders o ON o.id = t.order_id
 		LEFT JOIN floor_tables ft ON ft.id = o.table_id
+		LEFT JOIN LATERAL (
+		    SELECT ARRAY_AGG(c.name ORDER BY c.name)::text[] AS kids
+		    FROM floor_tables c
+		    WHERE c.merged_into = ft.id
+		) merged ON TRUE
 		WHERE 1=1`
 	args := []interface{}{}
 	argIdx := 1

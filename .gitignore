@@ -31,3 +31,6 @@ backend/.env
 backend/.env.local
 frontend/.env
 frontend/.env.local
+
+# Local build artifacts
+backend/api-live.exe

@@ -27,22 +27,22 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (s *Service) Login(ctx context.Context, email, password string) (string, string, string, string, int, error) {
-	var id, passwordHash, role, branchID string
+func (s *Service) Login(ctx context.Context, email, password string) (string, string, string, string, string, int, error) {
+	var id, passwordHash, role, branchID, orgID string
 	var tokenVersion int
 	err := s.db.QueryRow(ctx,
-		`SELECT id, password_hash, role, COALESCE(branch_id::text, ''), token_version FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
+		`SELECT id, password_hash, role, COALESCE(branch_id::text, ''), COALESCE(organization_id::text, ''), token_version FROM users WHERE lower(email) = lower($1) AND deleted_at IS NULL`,
 		normalizeEmail(email),
-	).Scan(&id, &passwordHash, &role, &branchID, &tokenVersion)
+	).Scan(&id, &passwordHash, &role, &branchID, &orgID, &tokenVersion)
 	if err != nil {
-		return "", "", "", "", 0, fmt.Errorf("invalid credentials")
+		return "", "", "", "", "", 0, fmt.Errorf("invalid credentials")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
-		return "", "", "", "", 0, fmt.Errorf("invalid credentials")
+		return "", "", "", "", "", 0, fmt.Errorf("invalid credentials")
 	}
 
-	return id, email, role, branchID, tokenVersion, nil
+	return id, email, role, branchID, orgID, tokenVersion, nil
 }
 
 func (s *Service) Register(ctx context.Context, name, email, password, role, branchID string) (string, error) {
@@ -126,6 +126,34 @@ func (s *Service) BumpTokenVersion(ctx context.Context, userID string) (int, err
 		return 0, err
 	}
 	return v, nil
+}
+
+// UserOrg returns the organization id for a user (empty string when the
+// account predates orgs or belongs to none).
+func (s *Service) UserOrg(ctx context.Context, userID string) (string, error) {
+	var orgID string
+	err := s.db.QueryRow(ctx,
+		`SELECT COALESCE(organization_id::text, '') FROM users WHERE id = $1::uuid`,
+		userID,
+	).Scan(&orgID)
+	return orgID, err
+}
+
+// OrgCurrency returns the ISO 4217 code for an organization ("" when the id
+// is empty or unknown) so the client can format money with Intl.NumberFormat.
+func (s *Service) OrgCurrency(ctx context.Context, orgID string) (string, error) {
+	if orgID == "" {
+		return "", nil
+	}
+	var currency string
+	err := s.db.QueryRow(ctx,
+		`SELECT currency FROM organizations WHERE id = $1::uuid`,
+		orgID,
+	).Scan(&currency)
+	if err != nil {
+		return "", nil // unknown org: fall back to client default, not an error
+	}
+	return currency, nil
 }
 
 // MarkEmailVerified stamps email_verified_at once, the first time.
@@ -253,6 +281,50 @@ func (s *Service) SetBranch(ctx context.Context, userID, branchID string) error 
 	return err
 }
 
+// CreateOrganization creates the tenant root and its first branch inside one
+// transaction, then attaches the owner. The signup flow calls this instead of
+// claiming the shared default branch — each business gets its own org so
+// data, currency and reporting stay isolated per tenant.
+func (s *Service) CreateOrganization(ctx context.Context, name, currency string) (orgID, branchID string, err error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback(ctx)
+
+	if currency == "" {
+		currency = "NPR"
+	}
+	err = tx.QueryRow(ctx,
+		`INSERT INTO organizations (name, currency) VALUES ($1, $2) RETURNING id::text`,
+		name, currency,
+	).Scan(&orgID)
+	if err != nil {
+		return "", "", err
+	}
+
+	branchName := name + " — Main Branch"
+	err = tx.QueryRow(ctx,
+		`INSERT INTO branches (name, status, address, organization_id) VALUES ($1, 'Online', '', $2::uuid) RETURNING id::text`,
+		branchName, orgID,
+	).Scan(&branchID)
+	if err != nil {
+		return "", "", err
+	}
+
+	return orgID, branchID, tx.Commit(ctx)
+}
+
+// AttachUserToOrg links an existing user account to an organization. Signup
+// and the Google first-login flow use it right after creating the user row.
+func (s *Service) AttachUserToOrg(ctx context.Context, userID, orgID string) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE users SET organization_id = $1::uuid WHERE id = $2`,
+		orgID, userID,
+	)
+	return err
+}
+
 // FindOAuthAccount returns the user bound to a provider identity, if any.
 // (provider, provider_sub) is the stable external key.
 func (s *Service) FindOAuthAccount(ctx context.Context, provider, sub string) (string, bool, error) {
@@ -285,7 +357,7 @@ func (s *Service) RegisterOAuthUser(ctx context.Context, name, email, provider, 
 	var userID string
 	err = tx.QueryRow(ctx,
 		`INSERT INTO users (name, email, password_hash, role, branch_id, email_verified_at)
-		 VALUES ($1, $2, '', 'Corporate Admin', $3::uuid, now())
+		 VALUES ($1, $2, '', 'Corporate Admin', NULLIF($3, '')::uuid, now())
 		 RETURNING id::text`,
 		name, normalizeEmail(email), branchID,
 	).Scan(&userID)

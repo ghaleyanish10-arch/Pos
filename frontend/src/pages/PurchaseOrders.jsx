@@ -8,6 +8,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { useToast } from '../components/ui/Toast';
 import { suppliers } from '../data/ims';
 import api from '../api/client';
+import { money } from '../utils/format';
 
 const statusTone = {
   Draft: 'neutral',
@@ -26,7 +27,7 @@ const fromPo = (po) => ({
   id: po.id || '',
   supplier: po.supplier || '',
   count: Array.isArray(po.items) ? po.items.length : 0,
-  total: `Rs ${Number(po.total || 0).toLocaleString('en-IN')}`,
+  total: `${money(Number(po.total || 0).toLocaleString('en-IN'))}`,
   expected: po.expected_date
     ? new Date(po.expected_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
     : '—',
@@ -103,7 +104,7 @@ export function PurchaseOrders() {
         id: created.id,
         supplier: newSupplier,
         count: newLines.length,
-        total: `Rs ${total.toLocaleString('en-IN')}`,
+        total: money(total),
         expected,
         status: created.status || 'Draft',
         raw: { ...created, items: newLines.map(toApiPoLine) }
@@ -132,7 +133,7 @@ export function PurchaseOrders() {
         id: created.id,
         supplier: newSupplier,
         count: newLines.length,
-        total: `Rs ${total.toLocaleString('en-IN')}`,
+        total: money(total),
         expected,
         status: 'Sent',
         raw: { ...created, items: newLines.map(toApiPoLine) }

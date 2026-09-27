@@ -224,10 +224,30 @@ func TestTableMergeGuard(t *testing.T) {
 		t.Errorf("merge without source_table_id returned %d, want 400: %s", w.Code, w.Body.String())
 	}
 
-	// Source without any open order has nothing to fold.
+	// Vacant source: legal since the vacant-merge feature — a floor grouping
+	// with no check folding. The merge succeeds with zero items moved, and the
+	// group is then released via unmerge so later cases start clean.
 	w = doReq(r, http.MethodPut, "/api/v1/pos/tables/"+openA.ID+"/merge", token, map[string]string{"source_table_id": openC.ID})
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("merge of unoccupied source returned %d, want 400: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Errorf("merge of unoccupied source returned %d, want 200: %s", w.Code, w.Body.String())
+	} else {
+		var ev struct {
+			Items int `json:"items_moved"`
+		}
+		jsonDecode(t, w.Body.Bytes(), &ev)
+		if ev.Items != 0 {
+			t.Errorf("vacant-source merge moved %d items, want 0", ev.Items)
+		}
+		// The target (openA) keeps its own Seated state — the vacant source
+		// adds no check, so the group's occupancy is unchanged by the fold.
+		w = doReq(r, http.MethodPost, "/api/v1/pos/tables/"+openA.ID+"/unmerge", token, nil)
+		if w.Code != http.StatusOK {
+			t.Errorf("unmerge after vacant merge returned %d: %s", w.Code, w.Body.String())
+		}
+		after := findMerged(t, r, token, openA.ID)
+		if after.ID == "" || len(after.MergedWith) != 0 {
+			t.Errorf("unmerge did not release the group: %+v", after)
+		}
 	}
 
 	// Target-vacant fold: the combined check is CREATED on the empty target.

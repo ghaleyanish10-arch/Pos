@@ -17,6 +17,7 @@ import { useTables } from '../state/TableContext';
 import { useElevation, withElevation } from '../state/ElevationContext';
 import { useRole } from '../state/RoleContext';
 import { RestrictedState } from '../components/role/RestrictedState';
+import { money } from '../utils/format';
 
 // Refunds are manager/boss only. The wrapper keeps the guard above the board
 // so the board's hooks always run unconditionally (rules-of-hooks), while a
@@ -58,7 +59,7 @@ function RefundsBoard() {
             tag: g.table_name ? labelOf(g.table_name) : 'Takeaway',
             items: Array.isArray(g.items) ? g.items.join(', ') : (typeof g.items === 'string' ? g.items : ''),
             reason: g.reason || '',
-            amount: `Rs ${Number(g.amount || 0).toLocaleString('en-IN')}`,
+            amount: `${money(Number(g.amount || 0).toLocaleString('en-IN'))}`,
             age: (() => { const m = Math.floor((Date.now() - new Date(g.created_at).getTime()) / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr`; })(),
             locked: !!g.locked_by,
           });

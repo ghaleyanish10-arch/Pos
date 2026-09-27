@@ -211,6 +211,11 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		TableID:  &tableID,
 		GuestID:  &req.GuestID,
 		BranchID: strPtr(branchID.(string)),
+
+		// Offline sync: when the queued write replays, the same key returns
+		// the original order instead of creating a duplicate.
+		IdempotencyKey:  req.IdempotencyKey,
+		ClientCreatedAt: req.ClientCreatedAt,
 	}
 
 	if err := h.repo.Create(c.Request.Context(), order, req.Items); err != nil {

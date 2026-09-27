@@ -13,6 +13,7 @@ import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
 import { useSettings } from '../state/SettingsContext';
 import { invoices as mockInvoices } from '../data/business';
+import { money } from '../utils/format';
 
 const statusTone = {
   Draft: 'neutral',
@@ -21,7 +22,7 @@ const statusTone = {
   Overdue: 'red'
 };
 
-const rs = (v) => `Rs ${(Number(v) || 0).toLocaleString('en-IN')}`;
+const rs = (v) => `${money((Number(v) || 0).toLocaleString('en-IN'))}`;
 
 function shortDue(due) {
   if (!due) return '—';
@@ -54,12 +55,12 @@ function invoiceAmount(inv) {
 
 function invoiceWhatsAppText(inv) {
   const lines = (inv.items || [])
-    .map((l) => `• ${l.description} × ${l.qty} — Rs ${(l.qty * l.unit_price).toLocaleString('en-IN')}`)
+    .map((l) => `• ${l.description} × ${l.qty} — ${money((l.qty * l.unit_price).toLocaleString('en-IN'))}`)
     .join('\n');
   return [
     `Hello, here is invoice ${invoiceRef(inv)}.`,
     lines ? `\nItems:\n${lines}` : '',
-    `\nAmount: Rs ${invoiceAmount(inv).toLocaleString('en-IN')}`,`\nDue: ${inv.due_date ? shortDue(inv.due_date) : inv.due || '—'}`,`\nThank you.`,
+    `\nAmount: ${money(invoiceAmount(inv).toLocaleString('en-IN'))}`,`\nDue: ${inv.due_date ? shortDue(inv.due_date) : inv.due || '—'}`,`\nThank you.`,
   ].join('');
 }
 

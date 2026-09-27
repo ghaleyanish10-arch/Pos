@@ -8,8 +8,9 @@ import { Field, inputClass } from '../components/ui/Controls';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
+import { money } from '../utils/format';
 
-const rs = (n) => `Rs ${Math.round(n).toLocaleString('en-IN')}`;
+const rs = (n) => `${money(Math.round(n).toLocaleString('en-IN'))}`;
 
 // Restronp color language: green = paid, amber = awaiting approval, red = nothing here.
 const STATUS_TONE = { paid: 'green', approved: 'blue', draft: 'amber' };

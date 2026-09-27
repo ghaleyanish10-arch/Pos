@@ -9,7 +9,7 @@ import (
 const testSecret = "test-secret-key"
 
 func TestGenerateTokenPair(t *testing.T) {
-	pair, err := GenerateTokenPair("u1", "user@test.dev", "Cashier", "b1", 0, testSecret, time.Hour, 24*time.Hour)
+	pair, err := GenerateTokenPair("u1", "user@test.dev", "Cashier", "b1", "org1", 0, testSecret, time.Hour, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair returned error: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestGenerateTokenPair(t *testing.T) {
 }
 
 func TestValidateToken_RoundTrip(t *testing.T) {
-	pair, err := GenerateTokenPair("u42", "cashier@test.dev", "Store Manager", "b9", 3, testSecret, time.Hour, time.Hour)
+	pair, err := GenerateTokenPair("u42", "cashier@test.dev", "Store Manager", "b9", "org1", 3, testSecret, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestValidateToken_RoundTrip(t *testing.T) {
 }
 
 func TestValidateToken_WrongSecret(t *testing.T) {
-	pair, err := GenerateTokenPair("u1", "a@b.c", "Cashier", "", 0, testSecret, time.Hour, time.Hour)
+	pair, err := GenerateTokenPair("u1", "a@b.c", "Cashier", "", "", 0, testSecret, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 }
 
 func TestValidateToken_Expired(t *testing.T) {
-	pair, err := GenerateTokenPair("u1", "a@b.c", "Cashier", "", 0, testSecret, -time.Minute, time.Hour)
+	pair, err := GenerateTokenPair("u1", "a@b.c", "Cashier", "", "", 0, testSecret, -time.Minute, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestValidateToken_Expired(t *testing.T) {
 }
 
 func TestValidateToken_Tampered(t *testing.T) {
-	pair, err := GenerateTokenPair("u1", "a@b.c", "Cashier", "", 0, testSecret, time.Hour, time.Hour)
+	pair, err := GenerateTokenPair("u1", "a@b.c", "Cashier", "", "", 0, testSecret, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatalf("GenerateTokenPair: %v", err)
 	}

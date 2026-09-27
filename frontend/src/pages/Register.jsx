@@ -25,7 +25,6 @@ import { Pill } from '../components/ui/Pill';
 import { Dialog } from '../components/ui/Dialog';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
-import { useOrders } from '../state/OrderContext';
 import { useTables } from '../state/TableContext';
 import { useMenu } from '../state/MenuContext';
 import { useSettings } from '../state/SettingsContext';
@@ -35,6 +34,8 @@ import { useCampaigns, campaignPhase, phaseWindow } from '../state/CampaignConte
 import { PaymentFlow } from '../components/pay/PaymentFlow';
 import { useSound } from '../state/SoundContext';
 import { TABLE_STATE_META, TABLE_STATE_ORDER } from '../data/tableStates';
+import { enqueue, uuid } from '../utils/offlineQueue';
+import { money } from '../utils/format';
 
 const catDot = {
   'All items': 'bg-meta',
@@ -59,7 +60,7 @@ const POPULAR_NAMES = ['Momo Jhol', 'Chicken Chilli', 'Thakali Set', 'Mint Mojit
 const RECENT_KEY = 'mesa_register_recent';
 
 const toNumber = (price) => Number(String(price).replace(/[^0-9.]/g, ''));
-const fmt = (n) => 'Rs ' + n.toLocaleString('en-IN');
+const fmt = (n) => money(n);
 const orderTypeIcon = { 'dine-in': UtensilsIcon, takeaway: ShoppingBagIcon, delivery: TruckIcon };
 
 const CART_KEY = 'mesa_register_cart';
@@ -137,8 +138,7 @@ export function Register() {
   const tableParam = searchParams.get('table');
   const toast = useToast();
   const { play } = useSound();
-  const { addOrder } = useOrders();
-  const { tables, occupyTable, freeTable, markOrdered, setTableOrder, labelOf } = useTables();
+  const { tables, occupyTable, markOrdered, setTableOrder, labelOf } = useTables();
   const { settings } = useSettings();
   const { items: menuItems, categories: categoriesList } = useMenu();
 
@@ -498,15 +498,22 @@ export function Register() {
         .join(' · ')
     }));
 
+    // Offline-first: stamp a client idempotency key BEFORE the network so a
+    // queued replay can never double-create the order.
+    const idempotencyKey = uuid();
+    const orderPayload = {
+      type: orderType,
+      table_id: orderTable,
+      guest_id: customerId || '',
+      idempotency_key: idempotencyKey,
+      client_created_at: new Date().toISOString(),
+      items: payloadItems
+    };
+
     try {
       const order = await api('/orders', {
         method: 'POST',
-        body: {
-          type: orderType,
-          table_id: orderTable,
-          guest_id: customerId || '',
-          items: payloadItems
-        }
+        body: orderPayload
       });
       const ref = `#${String(order.id).slice(0, 5).toUpperCase()}`;
       if (paidTable) {
@@ -557,24 +564,23 @@ export function Register() {
       // (validation, conflict) is NOT "sent": the cart stays so it can be
       // corrected and re-charged.
       if (!err || typeof err.status !== 'number') {
-        const ticket = addOrder(cart, methodLabel, {
-          notes: orderNotes,
-          allergy: orderNotes,
-          type: orderType,
-          table: orderTable || '—'
-        });
-        setOrderNotes('');
-        clearCart();
-        if (paidTable) freeTable(paidTable);
-        if (ticket) {
+        // True connectivity drop: persist the whole sale in the IndexedDB
+        // write queue. Replay uses the same idempotency key, so the server
+        // creates the order exactly once when the network returns.
+        try {
+          await enqueue('order', orderPayload, { endpoint: '/orders', method: 'POST', body: orderPayload });
+          setOrderNotes('');
+          clearCart();
+          if (paidTable) markOrdered(paidTable);
           play('paymentSuccess');
           window.dispatchEvent(new CustomEvent('mesa-order-update'));
-          toast.success(`Paid ${paid} · ${methodLabel} · Ticket ${ticket.id} recorded offline${paidTable ? ` · Table ${paidTable} open` : ''}`);
+          toast.success(`Offline: sale queued (${payloadItems.length} items) — syncs automatically${paidTable ? ` · Table ${paidTable} open` : ''}`);
           return true;
+        } catch {
+          play('paymentFailed');
+          toast('Could not queue the offline sale — order kept', { tone: 'red' });
+          return false;
         }
-        play('paymentFailed');
-        toast(`${methodLabel} could not be recorded — order kept`, { tone: 'red' });
-        return false;
       }
       const detail = err?.body?.error || err?.message || 'the server rejected the order';
       toast(`Order not placed: ${detail}`, { tone: 'red' });

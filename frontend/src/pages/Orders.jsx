@@ -22,6 +22,7 @@ import { useSound } from '../state/SoundContext';
 import { useOrders } from '../state/OrderContext';
 import { useDevice } from '../state/DeviceContext';
 import { api } from '../api/client';
+import { money } from '../utils/format';
 import {
   normalizeTicket,
   shortId,
@@ -101,7 +102,7 @@ const orderTotal = (t) => {
   const items = t.items || [];
   if (!items.length || typeof items[0] === 'string') return '—';
   const sum = items.reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.price) || 0), 0);
-  return sum > 0 ? `Rs ${Math.round(sum).toLocaleString('en-IN')}` : '—';
+  return sum > 0 ? `${money(Math.round(sum).toLocaleString('en-IN'))}` : '—';
 };
 
 const placedAt = (t) => {
@@ -816,7 +817,7 @@ export function Orders() {
                   <div key={line} className="flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm">
                     <span className="min-w-0 truncate text-ink">{line}</span>
                     <span className="font-mono text-xs font-bold text-meta">
-                      {(detailTicket.items[i] && typeof detailTicket.items[i] === 'object') ? `Rs ${Math.round((Number(detailTicket.items[i].qty) || 0) * (Number(detailTicket.items[i].price) || 0)).toLocaleString('en-IN')}` : ''}
+                      {(detailTicket.items[i] && typeof detailTicket.items[i] === 'object') ? `${money(Math.round((Number(detailTicket.items[i].qty) || 0) * (Number(detailTicket.items[i].price) || 0)).toLocaleString('en-IN'))}` : ''}
                     </span>
                   </div>
                 ))}

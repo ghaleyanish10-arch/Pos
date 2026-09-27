@@ -59,7 +59,12 @@ export const parseLine = (it) => {
 // "TBL 7" / "Takeaway" / "Delivery" / short id — the locators kitchen staff use.
 export const tableLabel = (t) => {
   const tbl = String(t?.table || '').trim();
-  if (tbl && tbl !== '—') return `TBL ${tbl}`;
+  if (tbl && tbl !== '—') {
+    // A merged group arrives pre-joined from the server ("T11 + T12"):
+    // render it verbatim so kitchen staff see every physical table covered.
+    if (tbl.includes(' + ')) return tbl;
+    return `TBL ${tbl}`;
+  }
   const ty = String(t?.type || 'dine-in').toLowerCase();
   if (ty === 'takeaway') return 'Takeaway';
   if (ty === 'delivery') return 'Delivery';

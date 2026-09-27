@@ -97,13 +97,14 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 	}
 
 	tx := &model.Transaction{
-		OrderID:   &req.OrderID,
-		Ref:       req.Ref,
-		Method:    req.Method,
-		Amount:    req.Amount,
-		SplitID:   req.SplitID,
-		SplitNote: req.SplitNote,
-		BranchID:  strPtr(branch),
+		OrderID:      &req.OrderID,
+		Ref:          req.Ref,
+		Method:       req.Method,
+		Amount:       req.Amount,
+		SplitID:      req.SplitID,
+		SplitNote:    req.SplitNote,
+		BranchID:     strPtr(branch),
+		TaxRules:     req.TaxBreakdown,
 	}
 
 	orderFullyPaid, err := h.repo.Create(c.Request.Context(), tx)

@@ -23,6 +23,7 @@ import { useNotifications } from '../state/Notifications';
 import { useSettings } from '../state/SettingsContext';
 import { inventory as staticInventory, reorderSuggestions as staticSuggestions } from '../data/manage';
 import api, { getApiUser } from '../api/client';
+import { money } from '../utils/format';
 
 const LOW_STOCK_NOTIFIED = new Set();
 
@@ -332,7 +333,7 @@ export function Inventory() {
       setStock((p) => p.map((i) =>
         i.name === wasteItem.name ? { ...i, stock: Math.max(0, i.stock - qty) } : i
       ));
-      toast(`Wasted ${qty} ${wasteItem.unit} of ${wasteItem.name} · Rs ${Math.round(cost).toLocaleString()}`, { tone: 'red' });
+      toast(`Wasted ${qty} ${wasteItem.unit} of ${wasteItem.name} · ${money(Math.round(cost).toLocaleString())}`, { tone: 'red' });
     } catch {
       toast('Could not record waste — saved locally only', { tone: 'red' });
     }
@@ -410,9 +411,9 @@ export function Inventory() {
       )}
 
       <StatRow stats={[
-        { label: 'Stock value', value: `Rs ${Math.round(stockValue).toLocaleString()}`, meta: 'at last cost' },
+        { label: 'Stock value', value: `${money(Math.round(stockValue).toLocaleString())}`, meta: 'at last cost' },
         { label: 'Needs attention', value: lowCount, meta: `${outItems.length} out · ${criticalItems.length} critical` },
-        { label: 'Waste this week', value: `Rs ${Math.round(wasteWeek).toLocaleString()}`, meta: 'write-offs, 7 days' },
+        { label: 'Waste this week', value: `${money(Math.round(wasteWeek).toLocaleString())}`, meta: 'write-offs, 7 days' },
         { label: 'Suppliers', value: new Set(stock.map((i) => i.supplier).filter(Boolean)).size, meta: 'active' }
       ]} />
 
@@ -599,7 +600,7 @@ export function Inventory() {
         open={wasteOpen}
         onClose={() => setWasteOpen(false)}
         title={wasteItem ? `Record waste — ${wasteItem.name}` : 'Record waste'}
-        subtitle={wasteItem ? `${wasteItem.stock} ${wasteItem.unit} on hand · Rs ${wasteItem.unitCost || wasteItem.estPrice || 0}/${wasteItem.unit}` : ''}
+        subtitle={wasteItem ? `${wasteItem.stock} ${wasteItem.unit} on hand · ${money(wasteItem.unitCost || wasteItem.estPrice || 0)}/${wasteItem.unit}` : ''}
         footer={
         <>
             <Button variant="outline" onClick={() => setWasteOpen(false)}>Cancel</Button>

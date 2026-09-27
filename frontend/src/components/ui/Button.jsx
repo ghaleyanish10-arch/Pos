@@ -1,5 +1,7 @@
 // Canonical variants: primary, success, danger, ghost, outline.
 // dark/red/green/quiet are legacy aliases kept so existing pages keep working.
+// google follows Google's button branding: white surface, hairline border,
+// near-black text, and the 4-color "G" runs separately as the icon.
 const variants = {
   outline: 'bg-white text-ink border border-line hover:border-ink/40 hover:bg-canvas',
   primary: 'bg-ink text-white border border-ink hover:bg-ink/90',
@@ -9,7 +11,8 @@ const variants = {
   danger: 'bg-status-red text-white border border-status-red hover:bg-status-red/90',
   red: 'bg-status-red text-white border border-status-red hover:bg-status-red/90',
   ghost: 'bg-transparent text-meta border border-transparent hover:text-ink',
-  quiet: 'bg-transparent text-meta border border-transparent hover:text-ink'
+  quiet: 'bg-transparent text-meta border border-transparent hover:text-ink',
+  google: 'bg-white text-[#1f1f1f] border border-[#747775] hover:bg-[#f9fbfd]'
 };
 
 const sizes = {

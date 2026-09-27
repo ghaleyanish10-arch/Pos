@@ -58,13 +58,17 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	payrollRepo := repo.NewPayrollRepo(pool)
 	printerRepo := repo.NewPrinterRepo(pool)
 	branchesRepo := repo.NewBranchesRepo(pool)
+	orgRepo := repo.NewOrgRepo(pool)
+	taxRepo := repo.NewTaxRepo(pool)
+	orgH := handler.NewOrgHandler(orgRepo, branchesRepo)
+	taxH := handler.NewTaxHandler(taxRepo)
 
 	// Auth service & handler
 	authSvc := auth.NewService(pool)
 	resend := email.New(cfg.RESENDAPIKey, cfg.EmailFrom, cfg.EmailFromName, cfg.AppURL)
 
 	// Handlers
-	authH := handler.NewAuthHandler(authSvc, userRepo, cfg)
+	authH := handler.NewAuthHandler(authSvc, userRepo, cfg, auditRepo)
 	authH.SetEmail(resend)
 	authH.SetSMTP(smtpMailer)
 	elevationH := handler.NewElevationHandler(elevationRepo, auditRepo, authSvc, cfg)
@@ -171,12 +175,23 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 	// Protected routes
 	protected := api.Group("")
 	protected.Use(authMW)
+	protected.Use(middleware.NewOrgContext(pool))
 	{
 		// Auth
 		protected.POST("/auth/switch-role", clockinH.SwitchRole)
 		protected.POST("/auth/pin", clockinH.SetOwnPIN)
 		protected.POST("/auth/register", middleware.RequireRole("Corporate Admin"), authH.Register)
 		protected.GET("/auth/me", authH.Me)
+
+		// Organization (tenant) + configurable tax rules.
+		protected.GET("/org", orgH.Get)
+		protected.GET("/org/branches", orgH.ListBranches)
+		protected.PUT("/org", middleware.RequireRole("Corporate Admin"), orgH.Update)
+		protected.GET("/tax/rules", taxH.List)
+		protected.POST("/tax/rules", middleware.RequireRole("Corporate Admin"), taxH.Create)
+		protected.PUT("/tax/rules/:id", middleware.RequireRole("Corporate Admin"), taxH.Update)
+		protected.DELETE("/tax/rules/:id", middleware.RequireRole("Corporate Admin"), taxH.Delete)
+		protected.POST("/tax/preview", taxH.Preview)
 
 		// Orders
 		protected.GET("/orders", orderH.List)
@@ -340,6 +355,7 @@ func Setup(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		protected.GET("/pos/tables/:id/bill", posH.GetTableBill)
 		protected.PUT("/pos/tables/:id/close", posH.CloseTable)
 		protected.PUT("/pos/tables/:id/merge", orderH.Merge)
+		protected.POST("/pos/tables/:id/unmerge", orderH.Unmerge)
 		protected.POST("/pos/tables/:id/drop-check", posH.DropCheck)
 		protected.POST("/pos/tables/:id/clear-check", posH.ClearCheck)
 		protected.POST("/pos/tables/:id/flag", posH.Flag)

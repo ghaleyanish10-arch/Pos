@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mesa-os/backend/internal/auth"
+	"github.com/mesa-os/backend/internal/config"
+	"github.com/mesa-os/backend/internal/model"
 )
 
 const (
@@ -58,6 +60,21 @@ func (h *AuthHandler) GoogleRedirect(c *gin.Context) {
 // finds or creates the matching Mesa OS account (role Corporate Admin — the
 // business owner), mints a JWT pair and bounces back to the frontend with the
 // token. Codes are single-use by design: Google rotates each authorization code.
+//
+// One button serves both sign-in and sign-up (the decision rule):
+//   - a Google identity already bound to an account  -> sign in to that account
+//   - a users row for that email exists               -> LINK it: attach this
+//     Google identity to the existing password/OTP account and sign into it.
+//     Linking is the chosen email-collision policy: an owner who first signed
+//     up with a password can later pair the same (verified) Google address and
+//     use either door afterwards. It is never silent account theft — Google
+//     only returns addresses it has verified, and the binding is recorded in
+//     oauth_accounts.
+//   - no account at all                              -> create a fresh owner via
+//     the same account-creation/permission path as email signup
+//     (RegisterOAuthUser + CreateOrganization + SetBranch + AttachUserToOrg,
+//     role Corporate Admin, email pre-verified because Google owns it), then
+//     bind the identity in the same transaction.
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	// The signed-out cookie drops off after the first bounce; redeem or
 	// discard it up front so a replay cannot reuse it.
@@ -78,6 +95,15 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
+	// A declined consent screen (Google's `error=access_denied`) performs no
+	// account mutation: bounce straight back to the SPA with the reason so the
+	// visitor sees a friendly message instead of a raw JSON error page.
+	if decline := c.Query("error"); decline != "" {
+		c.Redirect(http.StatusFound, fmt.Sprintf("%s/auth/callback?error=%s",
+			h.appURLOrLocal(), url.QueryEscape(decline)))
+		return
+	}
+
 	code := c.Query("code")
 	if code == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing authorization code"})
@@ -87,13 +113,17 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), googleTimeout)
 	defer cancel()
 
-	info, err := exchangeGoogleCode(ctx, h.config.GoogleClientID, h.config.GoogleClientSecret, h.config.GoogleRedirectURL, code)
+	info, err := exchangeGoogleCode(ctx, h.config, code)
 	if err != nil {
+		h.googleAudit(c, "", "", "auth.google.failed", "google sign-in failed during token exchange",
+			map[string]any{"error": err.Error()})
 		c.JSON(http.StatusBadGateway, gin.H{"error": "google sign-in failed: " + err.Error()})
 		return
 	}
 
 	if info.Email == "" {
+		h.googleAudit(c, "", "", "auth.google.failed", "google sign-in failed: no email returned",
+			map[string]any{"google_id": info.ID})
 		c.JSON(http.StatusBadGateway, gin.H{"error": "google sign-in failed: no email returned by Google"})
 		return
 	}
@@ -105,7 +135,9 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	// 2. No Google binding — is there a users row with this email?
+	// 2. No Google binding — is there a users row with this email? That is an
+	//    email collision with a password/OTP account: LINK the identity to it
+	//    so the owner signs into the account they already have.
 	if !bound {
 		if existing, gerr := h.repo.GetByEmail(ctx, info.Email); gerr == nil {
 			if err := h.svc.BindOAuthAccount(ctx, existing.ID, "google", info.ID, info.Email); err != nil {
@@ -114,6 +146,9 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 			}
 			userID = existing.ID
 			bound = true
+			h.googleAudit(c, userID, existing.Role, "auth.google.link",
+				"Google identity linked to existing account "+existing.Email,
+				map[string]any{"google_id": info.ID, "email": info.Email})
 			// Google only returns addresses it has verified.
 			if info.VerifiedEmail && existing.EmailVerifiedAt == nil {
 				_ = h.svc.MarkEmailVerified(ctx, existing.ID)
@@ -121,14 +156,12 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		}
 	}
 
-	// 3. Brand-new owner: user + oauth binding in one transaction.
+	// 3. Brand-new owner: user + oauth binding in one transaction, then the
+	//    same org/branch/permission wiring email signup performs (see Signup).
+	//    Falls back to claiming the default branch if org creation fails —
+	//    identical to the email signup fallback — so a tenant still exists.
 	if !bound {
-		branchID, berr := h.svc.EnsureDefaultBranch(ctx)
-		if berr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to initialise business branch"})
-			return
-		}
-		createdID, taken, oerr := h.svc.RegisterOAuthUser(ctx, info.Name, info.Email, "google", info.ID, branchID)
+		createdID, taken, oerr := h.svc.RegisterOAuthUser(ctx, info.Name, info.Email, "google", info.ID, "")
 		if oerr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create account"})
 			return
@@ -138,6 +171,19 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 			return
 		}
 		userID = createdID
+
+		if orgID, branchID, cer := h.svc.CreateOrganization(ctx, info.Name, ""); cer == nil {
+			_ = h.svc.SetBranch(ctx, userID, branchID)
+			_ = h.svc.AttachUserToOrg(ctx, userID, orgID)
+		} else {
+			ginLog("google signup org creation failed (account keeps legacy branch claim): " + cer.Error())
+			if branchID, berr := h.svc.EnsureDefaultBranch(ctx); berr == nil {
+				_ = h.svc.SetBranch(ctx, userID, branchID)
+			}
+		}
+		h.googleAudit(c, userID, "Corporate Admin", "auth.google.signup",
+			"New owner account created via Google for "+info.Email,
+			map[string]any{"google_id": info.ID, "email": info.Email, "name": info.Name})
 	}
 
 	// Every account gets a branch (their business/tenant), even pre-existing ones.
@@ -159,17 +205,53 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	if verr != nil {
 		tokenVersion = 0
 	}
-	tokens, err := auth.GenerateTokenPair(userID, user.Email, user.Role, branchID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
+	orgID, _ := h.svc.UserOrg(c.Request.Context(), userID)
+	tokens, err := auth.GenerateTokenPair(userID, user.Email, user.Role, branchID, orgID, tokenVersion, h.config.JWTSecret, h.config.JWTAccessExpiry, h.config.JWTRefreshExpiry)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate tokens"})
 		return
 	}
+
+	h.googleAudit(c, userID, user.Role, "auth.google.login",
+		"Signed in via Google as "+user.Email,
+		map[string]any{"google_id": info.ID, "email": user.Email, "linked": bound})
 
 	// Bounce back to the frontend with the session token; the SPA stores it and
 	// hydrates the profile from /auth/me.
 	redirect := fmt.Sprintf("%s/auth/callback?token=%s&email=%s",
 		h.appURLOrLocal(), tokens.AccessToken, url.QueryEscape(user.Email))
 	c.Redirect(http.StatusFound, redirect)
+}
+
+// googleAudit writes one audit_events row per Google auth outcome so the
+// existing audit trail covers OAuth sign-ups, links and sign-ins just like
+// the PIN/elevation flows do. actorID is the account affected (nil when the
+// identity never matched a user, e.g. a failed exchange).
+func (h *AuthHandler) googleAudit(c *gin.Context, actorID, actorRole, eventType, summary string, details map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	branchRaw, _ := c.Get("branch_id")
+	branchID, _ := branchRaw.(string)
+	after, err := json.Marshal(details)
+	if err != nil {
+		after = []byte("{}")
+	}
+	var actorPtr *string
+	if actorID != "" {
+		actorPtr = &actorID
+	}
+	event := &model.AuditEvent{
+		ActorID:   actorPtr,
+		ActorRole: actorRole,
+		EventType: eventType,
+		Summary:   summary,
+		AfterJSON: after,
+		BranchID:  strPtrOrNil(branchID),
+	}
+	if err := h.audit.Create(c.Request.Context(), event); err != nil {
+		ginLog("google audit write failed: " + err.Error())
+	}
 }
 
 // appURLOrLocal prefers the configured APP_URL and falls back to the backend
@@ -193,16 +275,26 @@ type googleUserInfo struct {
 
 // exchangeGoogleCode trades an authorization code for an access token, then
 // fetches the profile. Both calls keep the client secret in the request body
-// or header — it is never composed into a URL, and never returned.
-func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, redirectURL, code string) (*googleUserInfo, error) {
+// or header — it is never composed into a URL, and never returned. The token
+// and userinfo endpoints come from cfg (empty = Google's real endpoints; a
+// configured override is how tests point the flow at a fake server).
+func exchangeGoogleCode(ctx context.Context, cfg *config.Config, code string) (*googleUserInfo, error) {
+	tokenURL := cfg.GoogleTokenURL
+	if tokenURL == "" {
+		tokenURL = googleTokenURL
+	}
+	userInfoURL := cfg.GoogleUserInfoURL
+	if userInfoURL == "" {
+		userInfoURL = googleUserInfoURL
+	}
 	form := url.Values{}
 	form.Set("code", code)
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
-	form.Set("redirect_uri", redirectURL)
+	form.Set("client_id", cfg.GoogleClientID)
+	form.Set("client_secret", cfg.GoogleClientSecret)
+	form.Set("redirect_uri", cfg.GoogleRedirectURL)
 	form.Set("grant_type", "authorization_code")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +322,7 @@ func exchangeGoogleCode(ctx context.Context, clientID, clientSecret, redirectURL
 		return nil, fmt.Errorf("no access token in exchange response")
 	}
 
-	ureq, err := http.NewRequestWithContext(ctx, http.MethodGet, googleUserInfoURL, nil)
+	ureq, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoURL, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -24,6 +24,8 @@
  * truncated unpredictably by a printer driver.
  */
 
+import { money } from './format';
+
 const esc = (s) =>
   String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -130,7 +132,7 @@ export function printSplitReceipts({ title, subtitle, tableName, orderRef, items
     const mine = Array.isArray(seg.itemIds)
       ? items.filter((l) => seg.itemIds.includes(l.id))
       : null; // null = even split: the slip shows the shared bill
-    const lineRows = (mine || items).map((l) => [`${l.qty}× ${l.name}`, `Rs ${(l.qty * l.price).toLocaleString('en-IN')}`]);
+    const lineRows = (mine || items).map((l) => [`${l.qty}× ${l.name}`, `${money(l.qty * l.price)}`]);
     const guestNo = i + 1;
     const receipt = {
       title: title || (settings && settings.businessName) || 'Mesa OS',
@@ -139,9 +141,9 @@ export function printSplitReceipts({ title, subtitle, tableName, orderRef, items
       meta: orderRef ? `Order ${orderRef} · Guest ${guestNo} of ${segments.length}` : `Guest ${guestNo} of ${segments.length}`,
       items: lineRows.length > 0 ? lineRows : [['—', '—']],
       ledger: mine
-        ? [['Items subtotal (incl. VAT)', `Rs ${billSubtotal ? Math.round(mine.reduce((s, l) => s + l.qty * l.price, 0)).toLocaleString('en-IN') : '0'}`]]
-        : [['Bill subtotal (incl. VAT)', `Rs ${Math.round(billSubtotal).toLocaleString('en-IN')}`]],
-      total: `Rs ${Math.round(seg.amount).toLocaleString('en-IN')}`,
+        ? [['Items subtotal (incl. VAT)', money(billSubtotal ? Math.round(mine.reduce((s, l) => s + l.qty * l.price, 0)) : 0)]]
+        : [['Bill subtotal (incl. VAT)', money(Math.round(billSubtotal))]],
+      total: money(Math.round(seg.amount)),
       paidBy: seg.method || 'Split',
       paidAt: new Date().toLocaleString(),
       footerLines: [`Guest ${guestNo} of ${segments.length} — ${seg.method || 'split'} payment`],

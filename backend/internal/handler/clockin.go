@@ -275,7 +275,9 @@ func (h *ClockInHandler) ClockIn(c *gin.Context) {
 		tVersion = 0
 	}
 
-	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, status.Role, status.BranchID, tVersion, h.config.JWTSecret, h.config.ShiftTTL)
+	orgID, _ := h.authSvc.UserOrg(c.Request.Context(), status.UserID)
+
+	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, status.Role, status.BranchID, orgID, tVersion, h.config.JWTSecret, h.config.ShiftTTL)
 	if terr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue session token"})
 		return

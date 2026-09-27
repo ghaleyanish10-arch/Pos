@@ -123,7 +123,9 @@ func (h *ClockInHandler) SwitchRole(c *gin.Context) {
 	}
 
 	// Same shift-length session as clock-in, just worn as a different role.
-	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, dbRole, status.BranchID, tokenVersion, h.config.JWTSecret, h.config.ShiftTTL)
+	orgID, _ := h.authSvc.UserOrg(c.Request.Context(), status.UserID)
+
+	token, expiresAt, terr := auth.GenerateSessionToken(status.UserID, status.Email, dbRole, status.BranchID, orgID, tokenVersion, h.config.JWTSecret, h.config.ShiftTTL)
 	if terr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue session token"})
 		return

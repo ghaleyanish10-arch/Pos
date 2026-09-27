@@ -41,6 +41,7 @@ import { api } from '../api/client';
 import { GatewayTiles } from '../components/pay/GatewayTiles';
 import { SplitBill } from '../components/pay/SplitBill';
 import { printSplitReceipts } from '../utils/printReceipt';
+import { money } from '../utils/format';
 
 // --- per-state presentation. Icon + label + pattern, so status is readable
 //     even without colour (the legend up top repeats these shapes). Labels
@@ -546,7 +547,7 @@ export function FrontOfHouse() {
       setPayCovers(1);
       freeTable(selected.name);
       play('paymentSuccess');
-      toast.success(`Paid Rs ${amt.toLocaleString('en-IN')} · ${payMethod} · ${labelOf(selected.name)} · table open`);
+      toast.success(`Paid ${money(amt)} · ${payMethod} · ${labelOf(selected.name)} · table open`);
       if (resp?.warning) toast(resp.warning, { tone: 'red', silent: true });
     } catch (err) {
       play('paymentFailed');
@@ -587,7 +588,7 @@ export function FrontOfHouse() {
         segments
       }, settings);
       const sum = segments.reduce((s, g) => s + g.amount, 0);
-      toast.success(`Split bill settled · Rs ${sum.toLocaleString('en-IN')} across ${segments.length} guests · ${labelOf(selected.name)} · table open`);
+      toast.success(`Split bill settled · ${money(sum)} across ${segments.length} guests · ${labelOf(selected.name)} · table open`);
       if (lastResp?.warning) toast(lastResp.warning, { tone: 'red', silent: true });
     } catch (err) {
       console.error('confirmSplit failed:', err);
@@ -709,6 +710,25 @@ export function FrontOfHouse() {
     }
   }, [sel, mergeBusy, refreshTables, labelOf, toast]);
 
+  // Unmerge releases every child table back to its own card. The server
+  // clears merged_into on the whole group; the poll redraws separate cards.
+  const confirmUnmerge = useCallback(async () => {
+    if (!sel || !(sel.mergedWith?.length > 0) || mergeBusy) return;
+    setMergeBusy(true);
+    try {
+      await api(`/pos/tables/${sel.id}/unmerge`, { method: 'POST' });
+      setMergeOpen(false);
+      setSelected(sel);
+      refreshTables();
+      toast.success(`Unmerged — ${labelOf(sel.name)} is its own table again`);
+    } catch (err) {
+      console.error('confirmUnmerge failed:', err);
+      toast(err?.message || 'Unmerge failed — no backend connection', { tone: 'red', silent: true });
+    } finally {
+      setMergeBusy(false);
+    }
+  }, [sel, mergeBusy, refreshTables, labelOf, toast]);
+
   const confirmMove = useCallback((room) => {
     if (!sel || !room) return;
     setRoom(sel.name, room);
@@ -795,7 +815,10 @@ export function FrontOfHouse() {
     { label: 'View order', icon: <EyeIcon className="h-4 w-4" />, run: openView, disabled: !selOccupied },
     { label: 'Add items', icon: <PlusIcon className="h-4 w-4" />, run: addItems, disabled: false },
     { label: 'Transfer', icon: <ArrowLeftRightIcon className="h-4 w-4" />, run: () => sel && setTransferOpen(true), disabled: !selOccupied },
-    { label: 'Merge', icon: <CombineIcon className="h-4 w-4" />, run: () => sel && setMergeOpen(true), disabled: !selOccupied || (sel.mergedWith?.length > 0) },
+    // Merge works from vacant tables too (grouping empty tables for a large
+    // party); only a table already heading a group is excluded — unmerge first.
+    { label: 'Merge', icon: <CombineIcon className="h-4 w-4" />, run: () => sel && setMergeOpen(true), disabled: sel?.mergedWith?.length > 0 },
+    { label: 'Unmerge', icon: <CombineIcon className="h-4 w-4" style={{ transform: 'scaleX(-1)' }} />, run: () => sel && confirmUnmerge(), disabled: !(sel?.mergedWith?.length > 0) },
     { label: 'Split bill', icon: <SplitIcon className="h-4 w-4" />, run: openSplitView, disabled: !selOccupied || billTotal <= 0 },
     { label: 'Move table', icon: <MoveIcon className="h-4 w-4" />, run: () => sel && setMoveOpen(true), disabled: false },
     { label: 'Pay', icon: <BanknoteIcon className="h-4 w-4" />, run: openPay, disabled: !selOccupied },
@@ -1156,22 +1179,23 @@ export function FrontOfHouse() {
         {transferBusy && <p className="mt-3 text-center text-sm font-semibold text-meta">Moving order…</p>}
       </Dialog>
 
-      {/* merge */}
+      {/* merge — vacant tables are valid sources: the group becomes one card,
+          and an occupied source folds its check into the target's */}
       <Dialog
         open={mergeOpen}
         onClose={() => setMergeOpen(false)}
         title={`Merge into ${sel ? selLabel : ''}`}
-        subtitle="Pick another occupied table to fold into this one — both become one check and one card"
+        subtitle="Pick another table to combine with this one — seated tables fold their check in, vacant ones just join the group"
         width="max-w-md"
         footer={
           <Button variant="outline" onClick={() => setMergeOpen(false)}>Cancel</Button>
         }>
-        {floorTables.filter((t) => t.name !== sel?.name && t.orderId && !t.mergedWith?.length).length === 0 ? (
-          <p className="text-sm text-meta">No other occupied tables to merge.</p>
+        {floorTables.filter((t) => t.name !== sel?.name && !(t.mergedWith?.length > 0)).length === 0 ? (
+          <p className="text-sm text-meta">No other tables available to merge.</p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {floorTables
-              .filter((t) => t.name !== sel?.name && t.orderId && !t.mergedWith?.length)
+              .filter((t) => t.name !== sel?.name && !(t.mergedWith?.length > 0))
               .map((t) =>
                 <button
                   key={t.name}
@@ -1179,7 +1203,7 @@ export function FrontOfHouse() {
                   disabled={mergeBusy}
                   onClick={() => confirmMerge(t)}
                   className="flex items-center justify-between rounded-xl border border-line bg-surface px-3.5 py-3 text-left text-sm font-bold text-ink transition-colors duration-150 ease-soft hover:border-ink/40 hover:bg-canvas disabled:opacity-50">
-                  <span>{labelOf(t.name)}</span>
+                  <span>{labelOf(t.name)}{t.orderId ? '' : <span className="ml-1.5 text-[11px] font-semibold text-meta">· vacant</span>}</span>
                   <span className="font-mono text-xs font-semibold text-meta">{t.seats}p</span>
                 </button>
               )}
@@ -1267,7 +1291,7 @@ export function FrontOfHouse() {
         open={paymentOpen}
         onClose={() => { setPaymentOpen(false); setPayView('simple'); }}
         title={payView === 'split' ? 'Split the bill' : 'Collect payment'}
-        subtitle={`${sel ? selLabel : ''} · Rs ${billTotal.toLocaleString('en-IN')} due`}
+        subtitle={`${sel ? selLabel : ''} · ${money(billTotal)} due`}
         width={payView === 'split' ? 'max-w-lg' : 'max-w-md'}
         footer={
           payView === 'split' ? (
@@ -1276,7 +1300,7 @@ export function FrontOfHouse() {
             <>
               <Button variant="outline" onClick={() => setPaymentOpen(false)}>Cancel</Button>
               <Button variant="dark" full onClick={confirmPayment} disabled={payBusy}>
-                {payBusy ? 'Recording…' : `Pay Rs ${parseInt(payAmount.replace(/\D/g, ''), 10).toLocaleString('en-IN') || '0'}`}
+                {payBusy ? 'Recording…' : `Pay ${money(parseInt(payAmount.replace(/\D/g, ''), 10).toLocaleString('en-IN') || '0')}`}
               </Button>
             </>
           )

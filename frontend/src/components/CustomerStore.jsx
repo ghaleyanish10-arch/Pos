@@ -8,9 +8,10 @@ import { useToast } from './ui/Toast';
 import { useMenu } from '../state/MenuContext';
 import { useSettings } from '../state/SettingsContext';
 import { campaignPhase, phaseWindow, phaseNext } from '../state/CampaignContext';
+import { money } from '../utils/format';
 
 const toNum = (price) => Number(String(price).replace(/[^0-9.]/g, ''));
-const fmt = (n) => `Rs ${n.toLocaleString('en-IN')}`;
+const fmt = (n) => money(n);
 
 const allergenNotes = {
   'Chicken Momo': 'Contains wheat · chicken · soya',
@@ -173,29 +174,34 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
   };
 
   const cartLines = cart.map((l) => (
-    <div key={l.name} className="flex items-center gap-3 rounded-xl border border-line bg-canvas px-3 py-2.5">
-      <div className="min-w-0 flex-1">
+    // Wrapping flex row: name block grows and truncates (min-w-0), stepper
+    // never shrinks, and the line total right-aligns — on one line when the
+    // card is wide enough, wrapping under the stepper on very narrow cards
+    // (the phone-frame preview) instead of crushing the name to one letter or
+    // spilling past the card edge. No fixed widths on any text column.
+    <div key={l.name} className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-line bg-canvas px-2.5 py-2.5">
+      <div className="min-w-0 flex-1 basis-28">
         <p className="truncate text-sm font-semibold text-ink">{l.name}</p>
-        <p className="font-mono text-xs text-meta">{fmt(l.price)} each</p>
+        <p className="truncate font-mono text-xs text-meta">{fmt(l.price)} each</p>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           aria-label={`Fewer ${l.name}`}
           onClick={() => dec(l.name)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-ink hover:border-ink/30">
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-ink hover:border-ink/30">
           <MinusIcon className="h-4 w-4" />
         </button>
-        <span className="w-4 text-center text-sm font-bold text-ink">{l.qty}</span>
+        <span className="w-5 text-center text-sm font-bold tabular-nums text-ink">{l.qty}</span>
         <button
           type="button"
           aria-label={`More ${l.name}`}
           onClick={() => inc(l.name)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-ink hover:border-ink/30">
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-ink hover:border-ink/30">
           <PlusIcon className="h-4 w-4" />
         </button>
       </div>
-      <span className="w-16 text-right font-mono text-sm font-bold text-ink">
+      <span className="ml-auto whitespace-nowrap font-mono text-sm font-bold tabular-nums text-ink">
         {fmt(l.price * l.qty)}
       </span>
     </div>
@@ -417,13 +423,15 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
               onClose={() => setCartOpen(false)}
               title={{ heading: 'Your order', sub: `${count} item${count === 1 ? '' : 's'} · ${fmt(subtotal)}` }}
               footer={
-                <div className="flex w-full items-center gap-2">
-                  <Button variant="outline" onClick={() => setCartOpen(false)}>
+                // flex-1 on both buttons: equal width, equal height, single-line
+                // labels that never fight each other for space.
+                <div className="flex w-full items-stretch gap-2">
+                  <Button variant="outline" className="min-w-0 flex-1 whitespace-nowrap" onClick={() => setCartOpen(false)}>
                     Keep browsing
                   </Button>
                   <Button
                     variant="green"
-                    full
+                    className="min-w-0 flex-1 whitespace-nowrap"
                     onClick={placeOrder}
                     disabled={count === 0}>
                     Request order
@@ -441,13 +449,13 @@ export function CustomerStore({ accent, storefrontOpen, showPhotos, showAllergen
               subtitle={`${count} item${count === 1 ? '' : 's'} · ${fmt(subtotal)}`}
               width="max-w-md"
               footer={
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" onClick={() => setCartOpen(false)}>
+                <div className="flex w-full items-stretch gap-2">
+                  <Button variant="outline" className="min-w-0 flex-1 whitespace-nowrap" onClick={() => setCartOpen(false)}>
                     Keep browsing
                   </Button>
                   <Button
                     variant="green"
-                    full
+                    className="min-w-0 flex-1 whitespace-nowrap"
                     onClick={placeOrder}
                     disabled={count === 0}>
                     Request order

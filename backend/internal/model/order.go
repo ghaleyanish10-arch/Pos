@@ -16,6 +16,10 @@ type Order struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 	DeletedAt *time.Time `json:"deleted_at"`
 	Items     []OrderItem `json:"items,omitempty"`
+
+	// Offline-sync bookkeeping (request-side only; never selected back).
+	IdempotencyKey  string `json:"-"`
+	ClientCreatedAt string `json:"-"`
 }
 
 type OrderItem struct {
@@ -31,6 +35,10 @@ type OrderItem struct {
 type CreateOrderRequest struct {
 	Type    string              `json:"type"`
 	TableID string              `json:"table_id"`
+	// Offline sync: a client-generated UUID makes a replayed queued write a
+	// no-op instead of a duplicate order. Optional — old clients omit it.
+	IdempotencyKey  string `json:"idempotency_key"`
+	ClientCreatedAt string `json:"client_created_at"`
 	GuestID string              `json:"guest_id"`
 	Items   []CreateOrderItemReq `json:"items"`
 }

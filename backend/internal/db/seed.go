@@ -75,17 +75,39 @@ func ensureBranch(ctx context.Context, pool *pgxpool.Pool) (string, error) {
 	var branchID string
 	err := pool.QueryRow(ctx, `SELECT id FROM branches ORDER BY created_at LIMIT 1`).Scan(&branchID)
 	if err == nil {
+		// The demo tenant owns this branch — make sure the org linkage exists
+		// even when the branch predates the organizations migration.
+		_, _ = pool.Exec(ctx,
+			`UPDATE branches SET organization_id = COALESCE(organization_id, (SELECT id FROM organizations ORDER BY created_at LIMIT 1)) WHERE id = $1`,
+			branchID,
+		)
 		return branchID, nil
 	}
 
+	// Fresh database: create the demo organization first, then its branch.
+	var orgID string
+	err = pool.QueryRow(ctx, `SELECT id FROM organizations ORDER BY created_at LIMIT 1`).Scan(&orgID)
+	if err != nil {
+		err = pool.QueryRow(ctx,
+			`INSERT INTO organizations (name, currency) VALUES ('Mesa OS Demo', 'NPR') RETURNING id`,
+		).Scan(&orgID)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	err = pool.QueryRow(ctx,
-		`INSERT INTO branches (name, status, address) VALUES ('Downtown Branch', 'Online', 'Jyatha, Kathmandu') RETURNING id`,
+		`INSERT INTO branches (name, status, address, organization_id) VALUES ('Downtown Branch', 'Online', 'Jyatha, Kathmandu', $1) RETURNING id`,
+		ptrUUID(orgID),
 	).Scan(&branchID)
 	if err != nil {
 		return "", err
 	}
 	return branchID, nil
 }
+
+// ptrUUID adapts a string id for a uuid parameter.
+func ptrUUID(id string) any { return id }
 
 func ensureAdmin(ctx context.Context, pool *pgxpool.Pool, branchID string) error {
 	var exists bool
@@ -101,8 +123,8 @@ func ensureAdmin(ctx context.Context, pool *pgxpool.Pool, branchID string) error
 			return err
 		}
 		_, err = pool.Exec(ctx,
-			`INSERT INTO users (name, email, password_hash, role, branch_id, email_verified_at)
-			 VALUES ('Mesa Admin', 'admin@mesa.os', $1, 'Corporate Admin', $2, now())`,
+			`INSERT INTO users (name, email, password_hash, role, branch_id, email_verified_at, organization_id)
+			 VALUES ('Mesa Admin', 'admin@mesa.os', $1, 'Corporate Admin', $2, now(), (SELECT organization_id FROM branches WHERE id = $2))`,
 			string(hash), branchID,
 		)
 		if err != nil {

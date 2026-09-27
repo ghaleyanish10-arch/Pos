@@ -99,10 +99,10 @@ func (r *TransactionRepo) Create(ctx context.Context, t *model.Transaction) (ord
 	}
 
 	err = tx.QueryRow(ctx,
-		`INSERT INTO transactions (order_id, ref, method, amount, status, bill_split_id, split_note, branch_id)
-		 VALUES (NULLIF($1,'')::uuid, $2, $3, $4, 'Success', NULLIF($5,'')::uuid, $6, NULLIF($7,'')::uuid)
+		`INSERT INTO transactions (order_id, ref, method, amount, status, bill_split_id, split_note, branch_id, tax_breakdown)
+		 VALUES (NULLIF($1,'')::uuid, $2, $3, $4, 'Success', NULLIF($5,'')::uuid, $6, NULLIF($7,'')::uuid, $8)
 		 RETURNING id, created_at`,
-		t.OrderID, t.Ref, t.Method, t.Amount, t.SplitID, t.SplitNote, t.BranchID,
+		t.OrderID, t.Ref, t.Method, t.Amount, t.SplitID, t.SplitNote, t.BranchID, t.TaxRules,
 	).Scan(&t.ID, &t.CreatedAt)
 	if err != nil {
 		return false, err

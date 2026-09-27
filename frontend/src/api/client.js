@@ -1,4 +1,8 @@
 const API_BASE = '/api/v1';
+
+// The session's currency drives every money format in the app (§ multi-
+// currency): no component hardcodes a symbol.
+import { setOrgCurrency } from '../utils/format';
 const TOKEN_KEY = 'mesa_token';
 const REFRESH_KEY = 'mesa_refresh_token';
 const USER_KEY = 'mesa_user';
@@ -72,12 +76,14 @@ export function establishSession(token, user) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
   localStorage.removeItem(SESSION_NOTICE_KEY);
+  setOrgCurrency(user?.currency);
   window.dispatchEvent(new Event('mesa-session'));
 }
 
 // Persist an email/password or OAuth session. The login endpoint returns a
-// compact user; hydrate from /auth/me so the shell has name, role and the
-// authoritative email_verified flag before the UI renders.
+// compact user; hydrate from /auth/me so the shell has name, role, the
+// authoritative email_verified flag and the org's currency before the UI
+// renders.
 export async function authorizeSession(res) {
   const user = res?.user || {};
   let hydrated = user;

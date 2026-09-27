@@ -18,6 +18,7 @@ import { useSettings } from '../state/SettingsContext';
 import { useSound } from '../state/SoundContext';
 import { printReceiptHtml } from '../utils/printReceipt';
 import api from '../api/client';
+import { money } from '../utils/format';
 
 const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', '⌫'];
 const quickAmounts = ['500', '1000', '2000', '5000'];
@@ -60,7 +61,7 @@ export function ManualPayment() {
       });
       setRecord({ id: tx?.id || null, offline: false });
       play('paymentSuccess');
-      toast.success(`Rs ${display} payment recorded in Transactions`, { silent: true });
+      toast.success(`${money(display)} payment recorded in Transactions`, { silent: true });
     } catch (err) {
       console.error('ManualPayment record failed:', err);
       if (err?.message) {
@@ -180,7 +181,7 @@ export function ManualPayment() {
         ['Service charge 10%', 'Rs 220'],
         ['VAT 13%', 'Rs 65']
       ],
-      total: `Rs ${display}`,
+      total: `${money(display)}`,
       paidBy: method,
       paidAt: now,
       footerLines: [

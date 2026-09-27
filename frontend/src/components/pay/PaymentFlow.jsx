@@ -17,8 +17,9 @@ import { Button } from '../ui/Button';
 import { GatewayTiles, GATEWAYS } from './GatewayTiles';
 import { SplitBill } from './SplitBill';
 import { useSound } from '../../state/SoundContext';
+import { money } from '../../utils/format';
 
-const fmt = (n) => 'Rs ' + Math.round(Number(n) || 0).toLocaleString('en-IN');
+const fmt = (n) => money(Math.round(Number(n) || 0));
 
 // Explicit payment states — the ribbon renders the plain-English label and
 // each phase has its own screen so the cashier can never be unsure.
@@ -129,8 +130,8 @@ export function PaymentFlow({
 
   const quickTenders = [
     { label: 'Exact', value: total },
-    { label: `Rs ${Math.ceil(total / 500) * 500}`, value: Math.ceil(total / 500) * 500 },
-    { label: `Rs ${Math.ceil(total / 1000) * 1000}`, value: Math.ceil(total / 1000) * 1000 }
+    { label: `${money(Math.ceil(total / 500) * 500)}`, value: Math.ceil(total / 500) * 500 },
+    { label: `${money(Math.ceil(total / 1000) * 1000)}`, value: Math.ceil(total / 1000) * 1000 }
   ];
 
   const confirm = async () => {

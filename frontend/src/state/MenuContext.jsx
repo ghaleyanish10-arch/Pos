@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { menuItems as staticItems, menuCategories as staticCategories } from '../data/manage';
 import { api } from '../api/client';
+import { money } from '../utils/format';
 
 const MenuContext = createContext(null);
 
@@ -18,7 +19,7 @@ function toDisplay(item, idToCat) {
   return {
     id: item.id || '',
     name: item.name,
-    price: `Rs ${item.price}`,
+    price: `${money(item.price)}`,
     priceNum: Number(item.price),
     category,
     category_id: item.category_id || '',

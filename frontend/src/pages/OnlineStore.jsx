@@ -15,6 +15,7 @@ import { onlineOrders as initialOrders } from '../data/business';
 import { useOrders } from '../state/OrderContext';
 import { useCampaigns, DEMO_CAMPAIGN } from '../state/CampaignContext';
 import { useSettings } from '../state/SettingsContext';
+import { money } from '../utils/format';
 
 const tabs = ['Theme', 'Delivery zones', 'Payment methods', 'Order sync'];
 
@@ -71,7 +72,7 @@ export function OnlineStore() {
         items,
         address: 'Pickup at counter',
         type: 'pickup',
-        total: `Rs ${subtotal.toLocaleString('en-IN')}`,
+        total: money(subtotal),
         status: 'Received',
         time: 'Just now'
       },

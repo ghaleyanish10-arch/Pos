@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -14,10 +15,11 @@ type Transaction struct {
 	Status     string    `json:"status"`
 	FiscalID   string    `json:"fiscal_id"`
 	Certified  bool      `json:"certified"`
-	SplitID    string    `json:"split_id"`
-	SplitNote  string    `json:"split_note"`
-	BranchID   *string   `json:"branch_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	SplitID    string          `json:"split_id"`
+	SplitNote  string          `json:"split_note"`
+	BranchID   *string         `json:"branch_id"`
+	CreatedAt  time.Time       `json:"created_at"`
+	TaxRules   json.RawMessage `json:"tax_breakdown,omitempty"`
 }
 
 type CreateTransactionRequest struct {
@@ -27,8 +29,11 @@ type CreateTransactionRequest struct {
 	Ref     string  `json:"ref"`
 	// Split billing: segments of one order share order_id and a common
 	// bill_split_id so the register can show "2 of 3 segments paid".
-	SplitID   string  `json:"split_id"`
-	SplitNote string  `json:"split_note"` // e.g. "Guest 2 of 3" or "Split by items"
+	SplitID   string          `json:"split_id"`
+	SplitNote string          `json:"split_note"` // e.g. "Guest 2 of 3" or "Split by items"
+	// TaxBreakdown snapshots the rules used at charge time (migration 017) so
+	// receipts stay faithful after later tax-rule edits.
+	TaxBreakdown json.RawMessage `json:"tax_breakdown,omitempty"`
 }
 
 type ManualPaymentRequest struct {

@@ -20,8 +20,9 @@ import { StatRow } from '../components/ui/StatCard';
 import { useToast } from '../components/ui/Toast';
 import api from '../api/client';
 import { useSettings } from '../state/SettingsContext';
+import { money } from '../utils/format';
 
-const rs = (v) => `Rs ${Math.round(Number(v) || 0).toLocaleString('en-IN')}`;
+const rs = (v) => `${money(Math.round(Number(v) || 0).toLocaleString('en-IN'))}`;
 
 const TABS = ['Overview', 'Transactions', 'Invoices', 'Refunds', 'Payroll', 'Taxes'];
 const RANGE_OPTIONS = ['Today', '7 days', '28 days', 'All time'];
